@@ -3,7 +3,7 @@
 ################
 
 # STM
-ESTMDIR		?= SET_ESTM_PATH
+ESTMDIR		?= ../../estm-0.3.0
 TINYSTMDIR 	?= SET_TINYSTM_PATH
 TINY098DIR 	?= SET_TINY098_PATH
 WLPDSTMDIR	?= SET_SWISSTM_PATH
@@ -17,7 +17,7 @@ SOLARIS_CC 	?= SET_PATH_TO_SOLARIS_CC
 ifeq ($(VERSION),DEBUG)
      CFLAGS	+= -g -DDEBUG -O0
 else
-     CFLAGS	+= -O3 -DNDEBUG
+     CFLAGS	+= -g -O2 -DNDEBUG
 endif
 
 ROOT 		?= ../..

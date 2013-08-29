@@ -1,6 +1,6 @@
 #  include "stm.h"
 #  include "mod_mem.h"
-#  define TX_START(type)                 { sigjmp_buf *_e = stm_get_env(); sigsetjmp(*_e, 0); stm_start(_e, 0, type)
+#  define TX_START(type)                 { sigjmp_buf *_e = stm_get_env(); if(_e!=NULL)sigsetjmp(*_e, 0); stm_start(_e, 0, type)
 #  define TX_LOAD(addr)                  stm_load((stm_word_t *)addr)
 #  define TX_STORE(addr, val)            stm_store((stm_word_t *)addr, (stm_word_t)val)
 #  define TX_END                         stm_commit(); }

@@ -509,26 +509,7 @@ int main(int argc, char **argv)
 		updates = 0;
 		effupds = 0;
 		max_retries = 0;
-
-long counter_ins = 0;
-        long counter_del = 0;
-        long counter_search = 0;
-        long counter_ins_s = 0;
-        long counter_del_s = 0;
-        long counter_search_s = 0;
-
-
-        for (i = 0; i < nb_threads; i++) {
-
-
-        counter_ins += data[i].nb_add;
-        counter_del += data[i].nb_remove;
-        counter_search += data[i].nb_contains;
-        counter_ins_s += data[i].nb_added;
-        counter_del_s += data[i].nb_removed;
-        counter_search_s += data[i].nb_found;
-
-
+		for (i = 0; i < nb_threads; i++) {
 			printf("Thread %d\n", i);
 			printf("  #add        : %lu\n", data[i].nb_add);
 			printf("    #added    : %lu\n", data[i].nb_added);
@@ -600,11 +581,6 @@ long counter_ins = 0;
 		printf("#lr-ok        : %lu (%f / s)\n", locked_reads_ok, locked_reads_ok * 1000.0 / duration);
 		printf("#lr-failed    : %lu (%f / s)\n", locked_reads_failed, locked_reads_failed * 1000.0 / duration);
 		printf("Max retries   : %lu\n", max_retries);
-
-	fprintf(stderr, "\n0: %d, %d, %d, %d,", range, update/2, update/2, nb_threads);
-        fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
-        fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, duration);
-
 		
 #ifdef DEBUG
 		rbtree_verify(set, 1);
