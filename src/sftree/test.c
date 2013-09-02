@@ -22,6 +22,7 @@
  * GNU General Public License for more details.
  */
 
+#include <math.h>
 #include <unistd.h>
 #include "intset.h"
 
@@ -118,6 +119,39 @@ inline long rand_range_re(unsigned int *seed, long r) {
 	return v;
 }
 
+#define MAXITER 1000000000
+
+/* simple function for generating random integer for probability, only works on value of integer 1-100% */
+
+#define MAX_POOL 100
+
+int p_pool[MAX_POOL];
+
+void prepare_randintp(double ins, double del) {
+    
+    int i,j=0;
+    
+    //Put insert
+    for(i = 0;i < ins * MAX_POOL/100; i++){
+        p_pool[j++]=1;
+    }
+    //Put delete
+    for(i = 0; i< del* MAX_POOL/100; i++){
+        p_pool[j++]=2;
+    }
+    //Put search
+    for(i = j; i < MAX_POOL; i++){
+        p_pool[j++]=3;
+    }
+    /*
+     fprintf(stderr,"\n");
+     
+     for (i = 0; i < MAX_POOL; i++)
+     fprintf(stderr, "%d, ", p_pool[i]);
+     fprintf(stderr,"\n");
+     */
+}
+
 
 typedef struct thread_data {
         int id;
@@ -160,6 +194,9 @@ typedef struct thread_data {
 	unsigned long nb_aborts_double_write;
 	unsigned long max_retries;
 	unsigned int seed;
+    unsigned int seed2;
+    unsigned long nb_time;
+    unsigned long nb_maxiter;
 	avl_intset_t *set;
 	barrier_t *barrier;
 	unsigned long failures_because_contention;
@@ -242,9 +279,14 @@ void print_avltree(avl_intset_t *set) {
 void *test(void *data) {
 	int unext, last = -1; 
 	val_t val = 0;
-	int result;
+	int result, ops;
 	int id;
 	ulong *tloc;
+    
+    long cont = 0;
+    struct timeval start, end;
+	
+    
 #ifdef BIAS_RANGE
 	val_t increase;
 #endif
@@ -256,7 +298,8 @@ void *test(void *data) {
 #ifdef BIAS_RANGE
 	increase = d->range;
 #endif
-
+    gettimeofday(&start, NULL);
+    
 	/* Create transaction */
 	TM_THREAD_ENTER();
 	/* Wait on barrier */
@@ -268,9 +311,28 @@ void *test(void *data) {
 #ifdef ICC
 	while (stop == 0) {
 #else
-	while (AO_load_full(&stop) == 0) {
+	while(cont < d->nb_maxiter){
 #endif /* ICC */
-		
+		cont++;
+        ops = p_pool[rand_range_re(&d->seed2, 100) - 1];
+        //val = rand_range_re(&d->seed2, d->range);
+        
+        switch (ops){
+            case 1:
+                unext = 1;
+                last = -1;
+                break;
+            case 2:
+                unext = 1;
+                last = 0;
+                break;
+            case 3:
+                unext = 0;
+                break;
+            default: exit(0); break;
+        }
+
+        
 		if (unext) { // update
 			
 			if (last < 0) { // add
@@ -380,13 +442,14 @@ void *test(void *data) {
 			
 		}
 		
-		/* Is the next op an update? */
+		/* Is the next op an update?
 		if (d->effective) { // a failed remove/add is a read-only tx
 			unext = ((100 * (d->nb_added + d->nb_removed))
 							 < (d->update * (d->nb_add + d->nb_remove + d->nb_contains)));
 		} else { // remove/add (even failed) is considered as an update
 			unext = (rand_range_re(&d->seed, 100) - 1 < d->update);
 		}
+        */
 		
 #ifdef ICC
 	}
@@ -397,6 +460,11 @@ void *test(void *data) {
 	/* Free transaction */
 	TM_THREAD_EXIT();
 	
+        gettimeofday(&end, NULL);
+        
+        d->nb_time =(end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
+
+        
 	return NULL;
 }
 
@@ -686,6 +754,9 @@ int main(int argc, char **argv)
 	printf("Tree size     : %d\n", tree_size);
 	//printf("Level max    : %d\n", levelmax);
 	
+    //Prepare Pool
+    prepare_randintp(update/2, update/2);
+    
 	// Access set from all threads 
 	barrier_init(&barrier, nb_threads + nb_maintenance_threads + 1);
 	pthread_attr_init(&attr);
@@ -716,6 +787,9 @@ int main(int argc, char **argv)
 		data[i].nb_aborts_double_write = 0;
 		data[i].max_retries = 0;
 		data[i].seed = rand();
+        data[i].seed2 = rand();
+        data[i].nb_time = 0;
+        data[i].nb_maxiter = ceil (MAXITER/nb_threads);
 		data[i].set = set;
 		data[i].barrier = &barrier;
 		data[i].failures_because_contention = 0;
@@ -845,17 +919,21 @@ int main(int argc, char **argv)
     	long counter_ins_s = 0;
     	long counter_del_s = 0;
     	long counter_search_s = 0;
+        long counter_time = 0;
+
 
 
 	for (i = 0; i < nb_threads; i++) {
 
 
-	counter_ins += data[i].nb_add;
+        counter_ins += data[i].nb_add;
         counter_del += data[i].nb_remove;
         counter_search += data[i].nb_contains;
         counter_ins_s += data[i].nb_added;
         counter_del_s += data[i].nb_removed;
         counter_search_s += data[i].nb_found;
+        counter_time += data[i].nb_time;
+
 
 		printf("Thread %d\n", i);
 		printf("  #add        : %lu\n", data[i].nb_add);
@@ -964,7 +1042,7 @@ int main(int argc, char **argv)
 	
 	fprintf(stderr, "\n0: %d, %d, %d, %d,", range, update/2, update/2, nb_threads);	
 	fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
-    	fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, duration);
+    	fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, counter_time);
     
 
 	//print_avltree(set);
