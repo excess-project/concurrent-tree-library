@@ -101,37 +101,28 @@ inline long rand_range(long r) {
 
 /* Re-entrant version of rand_range(r) */
 inline long rand_range_re(unsigned int *seed, long r) {
-	int m = RAND_MAX;
-	int d, v = 0;
-
-/* #ifdef BIAS_RANGE */
-/* 	if(rand_r(seed) < RAND_MAX / 10000) { */
-/* 	  if(last < r || last > r * 10) { */
-/* 	    last = r; */
-/* 	  } */
-/* 	  return last++; */
-/* 	} */
-/* #endif
-	do {
-		d = (m > r ? r : m);		
-		v += 1 + (int)(d * ((double)rand_r(seed)/((double)(m)+1.0)));
-		r -= m;
-	} while (r > 0);
-	return v;
-*/
-    
+    /*
+     int m = RAND_MAX;
+     long d, v = 0;
+     do {
+     d = (m > r ? r : m);
+     v += 1 + (int)(d * ((double)rand_r(seed)/((double)(m)+1.0)));
+     r -= m;
+     } while (r > 0);
+     return v;
+     */
     return (rand_r(seed) % r) + 1;
 }
 
-#define MAXITER 1000000000
+#define MAXITER 100000000
 
 /* simple function for generating random integer for probability, only works on value of integer 1-100% */
 
-#define MAX_POOL 100
+#define MAX_POOL 1000
 
 int p_pool[MAX_POOL];
 
-void prepare_randintp(double ins, double del) {
+void prepare_randintp(float ins, float del) {
     
     int i,j=0;
     
@@ -335,7 +326,7 @@ void *test(void *data) {
 
 	  for(i = 0; i < NESTED_COUNT; i++) {
           cont++;
-          ops = p_pool[rand_range_re(&d->seed2, 100) - 1];
+          ops = p_pool[rand_range_re(&d->seed2, MAX_POOL) - 1];
           //val = rand_range_re(&d->seed2, d->range);
           
           switch (ops){
@@ -775,7 +766,7 @@ int main(int argc, char **argv)
 	//printf("Level max    : %d\n", levelmax);
 	
     //Prepare Pool
-    prepare_randintp(update/2, update/2);
+    prepare_randintp((float)update/2, (float)update/2);
     
     
 	// Access set from all threads 
@@ -1063,9 +1054,9 @@ int main(int argc, char **argv)
 	printf("Max retries   : %lu\n", max_retries);
 	
 
-	fprintf(stderr, "\n0: %d, %d, %d, %d,", range, update/2, update/2, nb_threads);
-        fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
-        fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, counter_time);
+	fprintf(stderr, "\n0: %ld, %0.2f, %0.2f, %d,", range, (float)update/2, (float)update/2, nb_threads);
+    fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
+    fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, counter_time);
 
 	//print_avltree(set);
 	// Delete set 
