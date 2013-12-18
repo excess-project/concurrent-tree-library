@@ -6,4 +6,6 @@
  */
 void test();
 
+void start_benchmark(int initial, int key_size, int updaterate, int num_thread, int treetype);
+
 #endif
