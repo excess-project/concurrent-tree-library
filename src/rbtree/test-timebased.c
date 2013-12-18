@@ -21,15 +21,7 @@
  * GNU General Public License for more details.
  */
 
-#include <math.h>
 #include "intset.h"
-
-#ifdef __USEPCM
-
-#include "cpucounters.h"
-using namespace std;
-
-#endif
 
 static volatile AO_t stop;
 
@@ -91,28 +83,24 @@ inline long rand_range(long r) {
 
 /* Re-entrant version of rand_range(r) */
 inline long rand_range_re(unsigned int *seed, long r) {
-	/*
-     int m = RAND_MAX;
-     long d, v = 0;
-     do {
-     d = (m > r ? r : m);
-     v += 1 + (int)(d * ((double)rand_r(seed)/((double)(m)+1.0)));
-     r -= m;
-     } while (r > 0);
-     return v;
-     */
-    return (rand_r(seed) % r) + 1;
+	int m = RAND_MAX;
+	long d, v = 0;
+	
+	do {
+		d = (m > r ? r : m);
+		v += 1 + (int)(d * ((double)rand_r(seed)/((double)(m)+1.0)));
+		r -= m;
+	} while (r > 0);
+	return v;
 }
-
-#define MAXITER 100000000
 
 /* simple function for generating random integer for probability, only works on value of integer 1-100% */
 
-#define MAX_POOL 1000
+#define MAX_POOL 100
 
 int p_pool[MAX_POOL];
 
-void prepare_randintp(float ins, float del) {
+void prepare_randintp(double ins, double del) {
     
     int i,j=0;
     
@@ -164,9 +152,6 @@ typedef struct thread_data {
 	unsigned long max_retries;
 	unsigned int seed;
     unsigned int seed2;
-    unsigned long nb_time;
-    unsigned long nb_maxiter;
-	
 	intset_t *set;
 	barrier_t *barrier;
 } thread_data_t;
@@ -176,16 +161,8 @@ void *test(void *data) {
 	int unext, ops, last = -1;
 	val_t val = 0;
 
-    
-    long cont = 0;
-    struct timeval start, end;
-	
-    
 	thread_data_t *d = (thread_data_t *)data;
 
-    gettimeofday(&start, NULL);
-    
-    
 	/* Create transaction */
 	TM_THREAD_ENTER();
 
@@ -198,10 +175,10 @@ void *test(void *data) {
 #ifdef ICC
 	while (stop == 0) {
 #else
-		while(cont < d->nb_maxiter){
+		while (AO_load_full(&stop) == 0) {
 #endif /* ICC */
-			cont++;
-            ops = p_pool[rand_range_re(&d->seed2, MAX_POOL) - 1];
+			
+            ops = p_pool[rand_range_re(&d->seed2, 100) - 1];
             //val = rand_range_re(&d->seed2, d->range);
             
             switch (ops){
@@ -295,11 +272,6 @@ void *test(void *data) {
 	/* Free transaction */
 	TM_THREAD_EXIT();
 	
-    gettimeofday(&end, NULL);
-    
-    d->nb_time =(end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
-
-    
 	return NULL;
 }
 
@@ -491,13 +463,12 @@ int main(int argc, char **argv)
 		printf("Set size     : %d\n", size);
 		
         //Prepare Pool
-        prepare_randintp((float)update/2, (float)update/2);
+        prepare_randintp(update/2, update/2);
     
 		/* Access set from all threads */
 		barrier_init(&barrier, nb_threads + 1);
 		pthread_attr_init(&attr);
 		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    
 		for (i = 0; i < nb_threads; i++) {
 	       
 			printf("Creating thread %d\n", i);
@@ -527,8 +498,6 @@ int main(int argc, char **argv)
 			data[i].max_retries = 0;
 			data[i].seed = rand();
             data[i].seed2 = rand();
-            data[i].nb_time = 0;
-            data[i].nb_maxiter = ceil (MAXITER/nb_threads);
 			data[i].set = set;
 			data[i].barrier = &barrier;
 			if (pthread_create(&threads[i], &attr, test, (void *)(&data[i])) != 0) {
@@ -545,17 +514,7 @@ int main(int argc, char **argv)
 			perror("signal");
 			exit(1);
 		}*/
-
-#ifdef __USEPCM
-    
-    PCM * m = PCM::getInstance();
-    
-    if (m->program() != PCM::Success) return 0;
-    
-    SystemCounterState before_sstate = getSystemCounterState();
-    
-#endif
-    
+		
 		/* Start threads */
 		barrier_cross(&barrier);
 		
@@ -587,19 +546,7 @@ int main(int argc, char **argv)
 				exit(1);
 			}
 		}
-
-#ifdef __USEPCM
-    
-    SystemCounterState after_sstate = getSystemCounterState();
-    
-    cout << "Instructions per clock: " << getIPC(before_sstate,after_sstate) << endl
-    << "L3 cache hit ratio: " << getL3CacheHitRatio(before_sstate,after_sstate) << endl
-    << "Bytes read: " << getBytesReadFromMC(before_sstate,after_sstate) << endl
-    << "Power used: " << getConsumedJoules(before_sstate,after_sstate) <<" joules"<< endl
-    << std::endl;
-    
-#endif
-
+		
 		duration = (end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
 		aborts = 0;
 		aborts_locked_read = 0;
@@ -624,8 +571,6 @@ long counter_ins = 0;
         long counter_ins_s = 0;
         long counter_del_s = 0;
         long counter_search_s = 0;
-    long counter_time = 0;
-
 
 
         for (i = 0; i < nb_threads; i++) {
@@ -637,8 +582,6 @@ long counter_ins = 0;
         counter_ins_s += data[i].nb_added;
         counter_del_s += data[i].nb_removed;
         counter_search_s += data[i].nb_found;
-            counter_time += data[i].nb_time;
-
 
 
 			printf("Thread %d\n", i);
@@ -713,9 +656,9 @@ long counter_ins = 0;
 		printf("#lr-failed    : %lu (%f / s)\n", locked_reads_failed, locked_reads_failed * 1000.0 / duration);
 		printf("Max retries   : %lu\n", max_retries);
 
-        fprintf(stderr, "\n0: %ld, %0.2f, %0.2f, %d,", range, (float)update/2, (float)update/2, nb_threads);
+	fprintf(stderr, "\n0: %d, %d, %d, %d,", range, update/2, update/2, nb_threads);
         fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
-        fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, counter_time);
+        fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, duration);
 
 		
 #ifdef DEBUG

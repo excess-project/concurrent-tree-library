@@ -205,11 +205,11 @@ endif
 
 CFLAGS += -D_REENTRANT
 CFLAGS += -Wall
-CFLAGS += -fno-strict-aliasing
+CFLAGS += -fno-strict-aliasing -funroll-loops
 CFLAGS += -I$(LIBAO_INC) -I$(ROOT)/include
 
 #LDFLAGS += -L$(LIBAO)/lib -latomic_ops 
-LDFLAGS += -lpthread
+LDFLAGS += -lpthread -lm
 
 ifdef STM
   ifneq ($(STM), SEQUENTIAL)

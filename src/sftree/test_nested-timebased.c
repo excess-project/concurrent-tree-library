@@ -1,15 +1,16 @@
 /*
  * File:
- *   test.c
+ *   test_nested.c
  * Author(s):
  *   Tyler Crain <tyler.crain@irisa.fr>
  *   Vincent Gramoli <vincent.gramoli@epfl.ch>
  * Description:
- *   Concurrent accesses to the speculation-friendly tree 
+ *   Concurrent accesses including nested ones 
+ *   to the speculation-friendly tree 
  *
  * Copyright (c) 2009-2010.
  *
- * test.c is part of Synchrobench
+ * test_nested.c is part of Synchrobench
  * 
  * Synchrobench is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -22,17 +23,8 @@
  * GNU General Public License for more details.
  */
 
-#include <math.h>
 #include <unistd.h>
 #include "intset.h"
-
-#ifdef __USEPCM
-
-#include "cpucounters.h"
-using namespace std;
-
-#endif
-
 
 //#define THROTTLE_NUM  1000
 //#define THROTTLE_TIME 10000
@@ -108,28 +100,33 @@ inline long rand_range(long r) {
 
 /* Re-entrant version of rand_range(r) */
 inline long rand_range_re(unsigned int *seed, long r) {
-    /*
-     int m = RAND_MAX;
-     long d, v = 0;
-     do {
-     d = (m > r ? r : m);
-     v += 1 + (int)(d * ((double)rand_r(seed)/((double)(m)+1.0)));
-     r -= m;
-     } while (r > 0);
-     return v;
-     */
-    return (rand_r(seed) % r) + 1;
+	int m = RAND_MAX;
+	int d, v = 0;
+
+/* #ifdef BIAS_RANGE */
+/* 	if(rand_r(seed) < RAND_MAX / 10000) { */
+/* 	  if(last < r || last > r * 10) { */
+/* 	    last = r; */
+/* 	  } */
+/* 	  return last++; */
+/* 	} */
+/* #endif	 */
+	do {
+		d = (m > r ? r : m);		
+		v += 1 + (int)(d * ((double)rand_r(seed)/((double)(m)+1.0)));
+		r -= m;
+	} while (r > 0);
+	return v;
 }
 
-#define MAXITER 100000000
 
 /* simple function for generating random integer for probability, only works on value of integer 1-100% */
 
-#define MAX_POOL 1000
+#define MAX_POOL 100
 
 int p_pool[MAX_POOL];
 
-void prepare_randintp(float ins, float del) {
+void prepare_randintp(double ins, double del) {
     
     int i,j=0;
     
@@ -153,6 +150,7 @@ void prepare_randintp(float ins, float del) {
      fprintf(stderr,"\n");
      */
 }
+
 
 
 typedef struct thread_data {
@@ -197,8 +195,6 @@ typedef struct thread_data {
 	unsigned long max_retries;
 	unsigned int seed;
     unsigned int seed2;
-    unsigned long nb_time;
-    unsigned long nb_maxiter;
 	avl_intset_t *set;
 	barrier_t *barrier;
 	unsigned long failures_because_contention;
@@ -279,16 +275,13 @@ void print_avltree(avl_intset_t *set) {
 
 
 void *test(void *data) {
-	int unext, last = -1; 
+  int unext, last = -1, i; 
 	val_t val = 0;
-	int result, ops;
+    int ops;
+	int result;
 	int id;
 	ulong *tloc;
-    
-    long cont = 0;
-    struct timeval start, end;
-	
-    
+	ulong tmp_nb_add, tmp_nb_added, tmp_nb_remove, tmp_nb_removed, tmp_nb_trans, tmp_nb_contains, tmp_nb_found;
 #ifdef BIAS_RANGE
 	val_t increase;
 #endif
@@ -300,8 +293,7 @@ void *test(void *data) {
 #ifdef BIAS_RANGE
 	increase = d->range;
 #endif
-    gettimeofday(&start, NULL);
-    
+
 	/* Create transaction */
 	TM_THREAD_ENTER();
 	/* Wait on barrier */
@@ -313,27 +305,45 @@ void *test(void *data) {
 #ifdef ICC
 	while (stop == 0) {
 #else
-	while(cont < d->nb_maxiter){
+	while (AO_load_full(&stop) == 0) {
 #endif /* ICC */
-		cont++;
-        ops = p_pool[rand_range_re(&d->seed2, MAX_POOL) - 1];
-        //val = rand_range_re(&d->seed2, d->range);
-        
-        switch (ops){
-            case 1:
-                unext = 1;
-                last = -1;
-                break;
-            case 2:
-                unext = 1;
-                last = 0;
-                break;
-            case 3:
-                unext = 0;
-                break;
-            default: exit(0); break;
-        }
+		
+	  
+	  TX_START(NL);
 
+#ifdef BIAS_RANGE
+	    tmp_increase = increase;
+#endif
+	    tmp_nb_add = 0;
+	    tmp_nb_trans = 0;
+	    tmp_nb_added = 0;
+	    tmp_nb_removed = 0;
+	    tmp_nb_remove = 0;
+	    tmp_nb_contains = 0;
+	    tmp_nb_found = 0;
+
+
+	  for(i = 0; i < NESTED_COUNT; i++) {
+          
+          ops = p_pool[rand_range_re(&d->seed2, 100) - 1];
+          //val = rand_range_re(&d->seed2, d->range);
+          
+          switch (ops){
+              case 1:
+                  unext = 1;
+                  last = -1;
+                  break;
+              case 2:
+                  unext = 1;
+                  last = 0;
+                  break;
+              case 3:
+                  unext = 0;
+                  break;
+              default: exit(0); break;
+          }
+          
+          
         
 		if (unext) { // update
 			
@@ -342,23 +352,22 @@ void *test(void *data) {
 				val = rand_range_re(&d->seed, d->range);
 #ifdef BIAS_RANGE
 				if(rand_range_re(&d->seed, 1000) < 50) {
-				  increase += rand_range_re(&d->seed, 10);
-				  if(increase > d->range * 20) {
-				    increase = d->range;
+				  tmp_increase += rand_range_re(&d->seed, 10);
+				  if(tmp_increase > d->range * 20) {
+				    tmp_increase = d->range;
 				  }
-				  val = increase;
+				  val = tmp_increase;
 				}
 #endif
 				if ((result = avl_add(d->set, val, TRANSACTIONAL, id)) > 0) {
-					d->nb_added++;
+					tmp_nb_added++;
 					if(result > 1) {
 					  d->nb_modifications++;
 					}
 					last = val;
 				}
-				d->nb_trans++;
-				tloc[id]++;
-				d->nb_add++;
+				tmp_nb_trans++;
+				tmp_nb_add++;
 				
 			} else { // remove
 				
@@ -368,11 +377,8 @@ void *test(void *data) {
 #else
 				    if ((result = avl_remove(d->set, last, TRANSACTIONAL, 0)) > 0) {
 #endif
-						d->nb_removed++;
-#ifdef REMOVE_LATER
+						tmp_nb_removed++;
 
-						finish_removal(d->set, id);
-#endif
 					        if(result > 1) {
 					           d->nb_modifications++;
 					         }
@@ -381,11 +387,11 @@ void *test(void *data) {
 				} else {
 					/* Random computation only in non-alternated cases */
 					val = rand_range_re(&d->seed, d->range);
-					/* Remove one random value */
+					///* Remove one random value
 #ifdef BIAS_RANGE
 					if(rand_range_re(&d->seed, 1000) < 300) {
 					  //val = d->range + rand_range_re(&d->seed, increase - d->range);
-					  val = increase - rand_range_re(&d->seed, 10);
+					  val = tmp_increase - rand_range_re(&d->seed, 10);
 					}
 #endif
 #ifdef TINY10B
@@ -393,11 +399,8 @@ void *test(void *data) {
 #else
 					  if ((result = avl_remove(d->set, val, TRANSACTIONAL, 0)) > 0) {
 #endif
-						d->nb_removed++;
-#ifdef REMOVE_LATER
+						tmp_nb_removed++;
 
-						finish_removal(d->set, id);
-#endif
 					        if(result > 1) {
 					          d->nb_modifications++;
 					        }
@@ -405,9 +408,8 @@ void *test(void *data) {
 						last = -1;
 					} 
 				}
-				d->nb_trans++;
-				tloc[id]++;
-				d->nb_remove++;
+				tmp_nb_trans++;
+				tmp_nb_remove++;
 			}
 			
 		} else { // read
@@ -437,10 +439,9 @@ void *test(void *data) {
 			}
 #endif
 			if (avl_contains(d->set, val, TRANSACTIONAL, id)) 
-				d->nb_found++;
-			d->nb_trans++;
-			tloc[id]++;
-			d->nb_contains++;
+				tmp_nb_found++;
+			tmp_nb_trans++;
+			tmp_nb_contains++;
 			
 		}
 		
@@ -452,6 +453,19 @@ void *test(void *data) {
 			unext = (rand_range_re(&d->seed, 100) - 1 < d->update);
 		}
         */
+	    }
+	    TX_END;
+#ifdef BIAS_RANGE
+	    increase = tmp_increase;
+#endif
+	    d->nb_trans += tmp_nb_trans;
+	    d->nb_added += tmp_nb_added;
+	    d->nb_add += tmp_nb_add;
+	    d->nb_contains += tmp_nb_contains;
+	    d->nb_found += tmp_nb_found;
+	    d->nb_remove += tmp_nb_remove;
+	    d->nb_removed += tmp_nb_removed;
+	    tloc[id] += tmp_nb_trans;
 		
 #ifdef ICC
 	}
@@ -462,18 +476,8 @@ void *test(void *data) {
 	/* Free transaction */
 	TM_THREAD_EXIT();
 	
-        gettimeofday(&end, NULL);
-        
-        d->nb_time =(end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
-
-        
 	return NULL;
 }
-
-
-
-
-
 
 
 
@@ -757,7 +761,8 @@ int main(int argc, char **argv)
 	//printf("Level max    : %d\n", levelmax);
 	
     //Prepare Pool
-    prepare_randintp((float)update/2, (float)update/2);
+    prepare_randintp(update/2, update/2);
+    
     
 	// Access set from all threads 
 	barrier_init(&barrier, nb_threads + nb_maintenance_threads + 1);
@@ -790,8 +795,6 @@ int main(int argc, char **argv)
 		data[i].max_retries = 0;
 		data[i].seed = rand();
         data[i].seed2 = rand();
-        data[i].nb_time = 0;
-        data[i].nb_maxiter = ceil (MAXITER/nb_threads);
 		data[i].set = set;
 		data[i].barrier = &barrier;
 		data[i].failures_because_contention = 0;
@@ -848,6 +851,8 @@ int main(int argc, char **argv)
 	}
 
 	pthread_attr_destroy(&attr);
+
+
 	
 	// Catch some signals 
 	if (signal(SIGHUP, catcher) == SIG_ERR ||
@@ -856,16 +861,6 @@ int main(int argc, char **argv)
 		perror("signal");
 		exit(1);
 	}
-
-#ifdef __USEPCM
-    
-    PCM * m = PCM::getInstance();
-    
-    if (m->program() != PCM::Success) return 0;
-    
-    SystemCounterState before_sstate = getSystemCounterState();
-    
-#endif
 	
 	// Start threads 
 	barrier_cross(&barrier);
@@ -905,17 +900,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-#ifdef __USEPCM
-    
-    SystemCounterState after_sstate = getSystemCounterState();
-    
-    cout << "Instructions per clock: " << getIPC(before_sstate,after_sstate) << endl
-    << "L3 cache hit ratio: " << getL3CacheHitRatio(before_sstate,after_sstate) << endl
-    << "Bytes read: " << getBytesReadFromMC(before_sstate,after_sstate) << endl
-    << "Power used: " << getConsumedJoules(before_sstate,after_sstate) <<" joules"<< endl
-    << std::endl;
-    
-#endif
+
 	
 	duration = (end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
 	aborts = 0;
@@ -934,16 +919,14 @@ int main(int argc, char **argv)
 	max_retries = 0;
 
 	long counter_ins = 0;
-    	long counter_del = 0;
-    	long counter_search = 0;
-    	long counter_ins_s = 0;
-    	long counter_del_s = 0;
-    	long counter_search_s = 0;
-        long counter_time = 0;
+        long counter_del = 0;
+        long counter_search = 0;
+        long counter_ins_s = 0;
+        long counter_del_s = 0;
+        long counter_search_s = 0;
 
 
-
-	for (i = 0; i < nb_threads; i++) {
+        for (i = 0; i < nb_threads; i++) {
 
 
         counter_ins += data[i].nb_add;
@@ -952,9 +935,11 @@ int main(int argc, char **argv)
         counter_ins_s += data[i].nb_added;
         counter_del_s += data[i].nb_removed;
         counter_search_s += data[i].nb_found;
-        counter_time += data[i].nb_time;
 
 
+
+
+	//for (i = 0; i < nb_threads; i++) {
 		printf("Thread %d\n", i);
 		printf("  #add        : %lu\n", data[i].nb_add);
 		printf("    #added    : %lu\n", data[i].nb_added);
@@ -1060,10 +1045,10 @@ int main(int argc, char **argv)
 	printf("  #failures   : %lu\n",  failures_because_contention);
 	printf("Max retries   : %lu\n", max_retries);
 	
-	fprintf(stderr, "\n0: %ld, %0.2f, %0.2f, %d,", range, (float)update/2, (float)update/2, nb_threads);
-	fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
-    	fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, counter_time);
-    
+
+	fprintf(stderr, "\n0: %d, %d, %d, %d,", range, update/2, update/2, nb_threads);
+        fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
+        fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, duration);
 
 	//print_avltree(set);
 	// Delete set 

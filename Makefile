@@ -1,7 +1,8 @@
 .PHONY:	all
 
 
-BENCHS = src/sftree src/linkedlist src/hashtable src/skiplist src/rbtree src/deque
+BENCHS = src/sftree src/rbtree 
+#src/linkedlist src/hashtable src/skiplist src/rbtree src/deque
 LBENCHS = src/linkedlist-lock src/hashtable-lock src/skiplist-lock
 LFBENCHS = src/linkedlist src/hashtable src/skiplist 
 

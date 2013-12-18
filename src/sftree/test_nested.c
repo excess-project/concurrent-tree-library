@@ -27,6 +27,13 @@
 #include <unistd.h>
 #include "intset.h"
 
+#ifdef __USEPCM
+
+#include "cpucounters.h"
+using namespace std;
+
+#endif
+
 //#define THROTTLE_NUM  1000
 //#define THROTTLE_TIME 10000
 //#define THROTTLE_MAINTENANCE
@@ -868,6 +875,16 @@ int main(int argc, char **argv)
 		perror("signal");
 		exit(1);
 	}
+
+#ifdef __USEPCM
+    
+    PCM * m = PCM::getInstance();
+    
+    if (m->program() != PCM::Success) return 0;
+    
+    SystemCounterState before_sstate = getSystemCounterState();
+    
+#endif
 	
 	// Start threads 
 	barrier_cross(&barrier);
@@ -907,7 +924,17 @@ int main(int argc, char **argv)
 		}
 	}
 
-
+#ifdef __USEPCM
+    
+    SystemCounterState after_sstate = getSystemCounterState();
+    
+    cout << "Instructions per clock: " << getIPC(before_sstate,after_sstate) << endl
+    << "L3 cache hit ratio: " << getL3CacheHitRatio(before_sstate,after_sstate) << endl
+    << "Bytes read: " << getBytesReadFromMC(before_sstate,after_sstate) << endl
+    << "Power used: " << getConsumedJoules(before_sstate,after_sstate) <<" joules"<< endl
+    << std::endl;
+    
+#endif
 	
 	duration = (end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
 	aborts = 0;
