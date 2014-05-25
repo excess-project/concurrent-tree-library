@@ -49,6 +49,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+
+#include <libkern/OSAtomic.h>
+#include <pthread.h>
+
+
 #ifdef WINDOWS
 #define bool char
 #define false 0
@@ -118,12 +123,18 @@ typedef struct record {
  * last leaf pointer points to the next leaf.
  */
 typedef struct node {
+    
 	void ** pointers;
 	int * keys;
 	struct node * parent;
 	bool is_leaf;
 	int num_keys;
 	struct node * next; // Used for queue.
+    
+    OSSpinLock lock;
+    struct node * right_link;
+    int high_key;
+    
 } node;
 
 
@@ -154,6 +165,9 @@ node * queue = NULL;
  * next to their corresponding keys.
  */
 bool verbose_output = false;
+
+// GLOBAL LOCK
+OSSpinLock global_lock = OS_SPINLOCK_INIT;
 
 
 // FUNCTION PROTOTYPES.
@@ -205,6 +219,476 @@ node * redistribute_nodes(node * root, node * n, node * neighbor, int neighbor_i
                           int k_prime_index, int k_prime);
 node * delete_entry( node * root, node * n, int key, void * pointer );
 node * delete( node * root, int key );
+
+
+/*---------------START PARALEL------------------*/
+
+#define STACK_MAX 100
+
+
+struct Stack {
+    struct node* data[STACK_MAX];
+    int         size;
+};
+
+typedef struct Stack Stack;
+
+
+void Stack_Init(Stack *S)
+{
+    S->size = 0;
+}
+
+struct node* Stack_Top(Stack *S)
+{
+    if (S->size == 0) {
+        fprintf(stderr, "Error TOP: stack empty\n");
+        exit(-1);
+    }
+    
+    return S->data[S->size-1];
+}
+
+void Stack_Push(Stack *S, struct node* d)
+{
+    if (S->size < STACK_MAX)
+        S->data[S->size++] = d;
+    else{
+        fprintf(stderr, "Error: stack full\n");
+        exit(EXIT_FAILURE);
+    }
+}
+
+struct node* Stack_Pop(Stack *S)
+{
+    if (S->size == 0){
+        fprintf(stderr, "Error POP: stack empty\n");
+        exit(EXIT_FAILURE);
+    }
+    else
+        return S->data[--(S->size)];
+}
+
+int scannode(int key, struct node** temp, int leaf){
+    
+    int i = 0;
+    
+    struct node *A = *temp;
+    
+    while (i < A->num_keys) {
+        if (key >= A->keys[i]) i++;
+        else break;
+    }
+    
+    /* Follow next_right if high_key is less than searched value*/
+    if(A->high_key > 0 && A->high_key <= key){
+        *temp = A->right_link;
+        return 1;
+    }else{
+        if(leaf){
+            for (i = 0; i < A->num_keys; i++)
+                if (A->keys[i] == key) break;
+            if (i == A->num_keys)
+                *temp = 0;
+            else
+                *temp = (node *)A->pointers[i];
+        }else
+           *temp =  (node *)A->pointers[i];
+        return 0;
+    }
+    
+}
+
+int search_par(struct node* root, int key)
+{
+    struct node *current = root;
+    
+    if(root == NULL) return 0;
+    
+    while (!current->is_leaf) {
+        scannode(key, &current, 0);
+    }
+    
+    while ((scannode(key, &current, 1))) {
+    
+    }
+    
+    if(current){
+        struct record *rec = (struct record*) current;
+        if (rec->value == key)
+            return 1;
+    }
+    
+    return 0;
+}
+
+struct node* move_right(int key, struct node* t)
+{
+    struct node* current = t;
+    if(current->high_key>0){
+    while (scannode(key, &t, 0)) {
+        OSSpinLockLock(&t->lock);
+        OSSpinLockUnlock(&current->lock);
+        current = t;
+    }
+    }
+    return current;
+}
+
+
+
+int insert_par( node ** root, int key, int value ) {
+    
+	record * pointer;
+	node *temp = NULL, *current = NULL, *new_leaf = NULL, *old_leaf = NULL, *child = NULL;
+
+    int * temp_keys;
+    void ** temp_pointers;
+    int insertion_index, split, i, j;
+
+    
+	/* Case: the tree does not exist yet.
+	 * Start a new tree.
+	 */
+    
+	if (*root == NULL){
+        //Try lock the global tree
+        if(OSSpinLockTry(&global_lock)){
+            pointer = make_record(value);
+            *root = start_new_tree(key, pointer);
+            OSSpinLockUnlock(&global_lock);
+            return 1;
+        }else{
+            //Wait here first
+            while(global_lock!=0){};
+        }
+    }
+	
+    Stack Nstack;
+    
+    Stack_Init(&Nstack);
+    
+    current = *root;
+    
+    while (!current->is_leaf) {
+        temp = current;
+        if(!scannode(key, &current, 0))
+            Stack_Push(&Nstack, temp);
+    }
+    
+    OSSpinLockLock(&current->lock);
+    current = move_right(key, current);
+    
+    //Now check whether the value exists
+    for (i = 0; i < current->num_keys; i++)
+        if (current->keys[i] == key) break;
+    
+    if (i != current->num_keys){
+        pointer = current->pointers[i];
+        if (pointer->value == key){
+            OSSpinLockUnlock(&current->lock);
+            return 0;
+        }
+    }
+    
+    pointer = make_record(value);
+    
+    while(1){
+        
+        if (current->num_keys < order - 1) {
+            //insert_into_leaf(current, key, pointer);
+            
+            if(current->is_leaf){
+                insertion_index = 0;
+                while (insertion_index < current->num_keys && current->keys[insertion_index] < key)
+                    insertion_index++;
+                
+                for (i = current->num_keys; i > insertion_index; i--) {
+                    current->keys[i] = current->keys[i - 1];
+                    current->pointers[i] = current->pointers[i - 1];
+                }
+                current->keys[insertion_index] = key;
+                current->pointers[insertion_index] = pointer;
+                current->num_keys++;
+                
+            }else{
+                insertion_index = 0;
+                
+                while (insertion_index <= current->num_keys &&
+                       current->pointers[insertion_index] != old_leaf)
+                    insertion_index++;
+                
+                for (i = current->num_keys; i > insertion_index; i--) {
+                    current->pointers[i + 1] = current->pointers[i];
+                    current->keys[i] = current->keys[i - 1];
+                }
+                current->pointers[insertion_index + 1] = pointer;
+                current->keys[insertion_index] = key;
+                current->num_keys++;
+            }
+             OSSpinLockUnlock(&current->lock);
+            return 1;
+        } else {  // split
+            
+            if(current->is_leaf){
+                
+                new_leaf = make_leaf();
+                
+                temp_keys = malloc( order * sizeof(int) );
+                if (temp_keys == NULL) {
+                    perror("Temporary keys array.");
+                    exit(EXIT_FAILURE);
+                }
+                
+                temp_pointers = malloc( order * sizeof(void *) );
+                if (temp_pointers == NULL) {
+                    perror("Temporary pointers array.");
+                    exit(EXIT_FAILURE);
+                }
+                
+                insertion_index = 0;
+                while (insertion_index < order - 1 && current->keys[insertion_index] < key)
+                    insertion_index++;
+                
+                for (i = 0, j = 0; i < current->num_keys; i++, j++) {
+                    if (j == insertion_index) j++;
+                    temp_keys[j] = current->keys[i];
+                    temp_pointers[j] = current->pointers[i];
+                }
+                
+                temp_keys[insertion_index] = key;
+                temp_pointers[insertion_index] = pointer;
+                
+                current->num_keys = 0;
+                
+                split = cut(order - 1);
+                
+                for (i = 0; i < split; i++) {
+                    current->pointers[i] = temp_pointers[i];
+                    current->keys[i] = temp_keys[i];
+                    current->num_keys++;
+                }
+                
+                for (i = split, j = 0; i < order; i++, j++) {
+                    new_leaf->pointers[j] = temp_pointers[i];
+                    new_leaf->keys[j] = temp_keys[i];
+                    new_leaf->num_keys++;
+                }
+                
+                free(temp_pointers);
+                free(temp_keys);
+                
+                new_leaf->pointers[order - 1] = current->pointers[order - 1];
+                current->pointers[order - 1] = new_leaf;
+                
+                for (i = current->num_keys; i < order - 1; i++)
+                    current->pointers[i] = NULL;
+                for (i = new_leaf->num_keys; i < order - 1; i++)
+                    new_leaf->pointers[i] = NULL;
+                
+                new_leaf->parent = current->parent;
+                
+                /* High Keys */
+                new_leaf->high_key = current->high_key;
+                current->high_key = (new_leaf->keys[0]);
+                new_leaf->right_link = current->right_link;
+                current->right_link = new_leaf;
+                
+                old_leaf = current;
+                
+                pointer = (struct record*) new_leaf;
+                key = new_leaf->keys[0];
+            }else{
+                /* First create a temporary set of keys and pointers
+                 * to hold everything in order, including
+                 * the new key and pointer, inserted in their
+                 * correct places.
+                 * Then create a new node and copy half of the
+                 * keys and pointers to the old node and
+                 * the other half to the new.
+                 */
+                
+                temp_pointers = malloc( (order + 1) * sizeof(node *) );
+                if (temp_pointers == NULL) {
+                    perror("Temporary pointers array for splitting nodes.");
+                    exit(EXIT_FAILURE);
+                }
+                temp_keys = malloc( order * sizeof(int) );
+                if (temp_keys == NULL) {
+                    perror("Temporary keys array for splitting nodes.");
+                    exit(EXIT_FAILURE);
+                }
+                
+                insertion_index = 0;
+                
+                while (insertion_index <= current->num_keys &&
+                       current->pointers[insertion_index] != old_leaf)
+                    insertion_index++;
+                
+                for (i = 0, j = 0; i < current->num_keys + 1; i++, j++) {
+                    if (j == insertion_index  + 1) j++;
+                    temp_pointers[j] = current->pointers[i];
+                }
+                
+                for (i = 0, j = 0; i < current->num_keys; i++, j++) {
+                    if (j == insertion_index ) j++;
+                    temp_keys[j] = current->keys[i];
+                }
+                
+                temp_pointers[insertion_index  + 1] = pointer;
+                temp_keys[insertion_index ] = key;
+                
+                /* Create the new node and copy
+                 * half the keys and pointers to the
+                 * old and half to the new.
+                 */
+                split = cut(order);
+                new_leaf = make_node();
+                current->num_keys = 0;
+                for (i = 0; i < split - 1; i++) {
+                    current->pointers[i] = temp_pointers[i];
+                    current->keys[i] = temp_keys[i];
+                    current->num_keys++;
+                }
+                current->pointers[i] = temp_pointers[i];
+                key = temp_keys[split - 1];
+                for (++i, j = 0; i < order; i++, j++) {
+                    new_leaf->pointers[j] = temp_pointers[i];
+                    new_leaf->keys[j] = temp_keys[i];
+                    new_leaf->num_keys++;
+                }
+                new_leaf->pointers[j] = temp_pointers[i];
+                
+                
+                
+                free(temp_pointers);
+                free(temp_keys);
+                new_leaf->parent = current->parent;
+                for (i = 0; i <= new_leaf->num_keys; i++) {
+                    child = new_leaf->pointers[i];
+                    child->parent = new_leaf;
+                }
+                
+                /* High Keys & Links */
+                new_leaf->high_key = current->high_key;
+                current->high_key = (new_leaf->keys[0]);
+                new_leaf->right_link = current->right_link;
+                current->right_link = new_leaf;
+                
+                
+                /* Insert a new key into the parent of the two
+                 * nodes resulting from the split, with
+                 * the old node to the left and the new to the right.
+                 */
+                
+                //return insert_into_parent(root, old_node, k_prime, new_node);
+                old_leaf = current;
+                
+                pointer = (struct record*) new_leaf;
+                //key = new_leaf->keys[0];
+                
+                
+            }
+            //Now we have to create a new root, restrict only 1 thread
+            if(Nstack.size == 0){
+                if(OSSpinLockTry(&global_lock)){
+                    *root = make_node();
+                    (*root)->keys[0] = key;
+                    (*root)->pointers[0] = old_leaf;
+                    (*root)->pointers[1] = new_leaf;
+                    (*root)->num_keys++;
+                    (*root)->parent = NULL;
+                    current->parent = *root;
+                    new_leaf->parent = *root;
+                    OSSpinLockUnlock(&old_leaf->lock);
+                    OSSpinLockUnlock(&global_lock);
+                    return 1;
+                }else{
+                    //Others wait here first
+                    while(global_lock!=0){};
+                }
+            }
+            
+            current = Stack_Pop(&Nstack);
+            
+            OSSpinLockLock(&current->lock);
+            
+            move_right(key, current);
+            
+            OSSpinLockUnlock(&old_leaf->lock);
+            
+
+        }
+    }
+    return 1;
+    
+}
+
+/* Master deletion function.
+ */
+int delete_par(node * root, int key) {
+    
+	int j = 0, i = 0, num_pointers;
+
+    struct node* current = NULL;
+    struct record* pointer = NULL;
+    
+    current = root;
+    
+    while (!current->is_leaf) {
+        scannode(key, &current, 0);
+    }
+    
+    OSSpinLockLock(&current->lock);
+    current = move_right(key, current);
+    
+    //Now check whether the value exists
+    for (j = 0; j < current->num_keys; j++)
+        if (current->keys[j] == key) break;
+    
+    if (j != current->num_keys){
+        pointer = current->pointers[j];
+        if (pointer->value == key){
+            // Remove the key and shift other keys accordingly.
+            i = 0;
+            while (current->keys[i] != key)
+                i++;
+            for (++i; i < current->num_keys; i++)
+                current->keys[i - 1] = current->keys[i];
+            
+            // Remove the pointer and shift other pointers accordingly.
+            // First determine number of pointers.
+            num_pointers = current->is_leaf ? current->num_keys : current->num_keys + 1;
+            i = 0;
+            while (current->pointers[i] != pointer)
+                i++;
+            for (++i; i < num_pointers; i++)
+                current->pointers[i - 1] = current->pointers[i];
+            
+            
+            // One key fewer.
+            current->num_keys--;
+            
+            // Set the other pointers to NULL for tidiness.
+            // A leaf uses the last pointer to point to the next leaf.
+            if (current->is_leaf)
+                for (i = current->num_keys; i < order - 1; i++)
+                    current->pointers[i] = NULL;
+            else
+                for (i = current->num_keys + 1; i < order; i++)
+                    current->pointers[i] = NULL;
+            OSSpinLockUnlock(&current->lock);
+            return 1;
+        }
+    }
+    OSSpinLockUnlock(&current->lock);
+    
+	return 0;
+}
+
+
+/*------------------END PARALEL------------------*/
+
 
 
 
@@ -441,7 +925,9 @@ void print_tree( node * root ) {
 			else
 				printf("%lx ", (unsigned long)n->pointers[n->num_keys]);
 		}
-		printf("| ");
+		/* Print the high keys here */
+        printf("<%d>", n->high_key);
+        printf("| ");
 	}
 	printf("\n");
 }
@@ -509,13 +995,38 @@ int find_range( node * root, int key_start, int key_end, bool verbose,
 	return num_found;
 }
 
+/* Traces the path from the root to a leaf, searching
+ * by key.  Displays information about the path
+ * if the verbose flag is set.
+ * Returns the leaf containing the given key.
+ */
+node * find_leaf( node * root, int key, bool verboses ) {
+	int i = 0;
+	node * c = root;
+	if (c == NULL) {
+		return c;
+	}
+	while (!c->is_leaf) {
+		i = 0;
+		while (i < c->num_keys) {
+			if (key >= c->keys[i]) i++;
+			else break;
+		}
+        /* Follow next_right if high_key is less than searched value*/
+        if(c->high_key > 0 && c->high_key <= key)
+            c = c->right_link;
+        else
+            c = (node *)c->pointers[i];
+	}
+	return c;
+}
 
 /* Traces the path from the root to a leaf, searching
  * by key.  Displays information about the path
  * if the verbose flag is set.
  * Returns the leaf containing the given key.
  */
-node * find_leaf( node * root, int key, bool verbose ) {
+node * find_leaf_ori( node * root, int key, bool verbose ) {
 	int i = 0;
 	node * c = root;
 	if (c == NULL) {
@@ -588,6 +1099,7 @@ record * make_record(int value) {
 	}
 	else {
 		new_record->value = value;
+        //new_record->mark = 0;
 	}
 	return new_record;
 }
@@ -617,6 +1129,9 @@ node * make_node( void ) {
 	new_node->num_keys = 0;
 	new_node->parent = NULL;
 	new_node->next = NULL;
+    
+    new_node->lock = OS_SPINLOCK_INIT;
+    
 	return new_node;
 }
 
@@ -662,7 +1177,8 @@ node * insert_into_leaf( node * leaf, int key, record * pointer ) {
 	leaf->keys[insertion_point] = key;
 	leaf->pointers[insertion_point] = pointer;
 	leaf->num_keys++;
-	return leaf;
+    
+    return leaf;
 }
 
 
@@ -735,7 +1251,16 @@ node * insert_into_leaf_after_splitting(node * root, node * leaf, int key, recor
 	new_leaf->parent = leaf->parent;
 	new_key = new_leaf->keys[0];
     
-	return insert_into_parent(root, leaf, new_key, new_leaf);
+    
+    
+    /* High Keys */
+    new_leaf->high_key = leaf->high_key;
+    leaf->high_key = (new_leaf->keys[0]);
+    new_leaf->right_link = leaf->right_link;
+    leaf->right_link = new_leaf;
+
+    
+    return insert_into_parent(root, leaf, new_key, new_leaf);
 }
 
 
@@ -830,6 +1355,13 @@ node * insert_into_node_after_splitting(node * root, node * old_node, int left_i
 		child = new_node->pointers[i];
 		child->parent = new_node;
 	}
+
+    /* High Keys & Links */
+    new_node->high_key = old_node->high_key;
+    old_node->high_key = (new_node->keys[0]);
+    new_node->right_link = old_node->right_link;
+    old_node->right_link = new_node;
+    
     
 	/* Insert a new key into the parent of the two
 	 * nodes resulting from the split, with
@@ -851,10 +1383,12 @@ node * insert_into_parent(node * root, node * left, int key, node * right) {
     
 	parent = left->parent;
     
-	/* Case: new root. */
+	/* Case: new root. NOTE: GLOBAL LOCK!!!*/
     
 	if (parent == NULL)
 		return insert_into_new_root(left, key, right);
+    //else
+    //    OSSpinLockLock(&parent->lock);
     
 	/* Case: leaf or node. (Remainder of
 	 * function body.)
@@ -870,8 +1404,13 @@ node * insert_into_parent(node * root, node * left, int key, node * right) {
 	/* Simple case: the new key fits into the node.
 	 */
     
-	if (parent->num_keys < order - 1)
-		return insert_into_node(root, parent, left_index, key, right);
+	if (parent->num_keys < order - 1){
+		struct node * temp = insert_into_node(root, parent, left_index, key, right);
+        OSSpinLockUnlock(&left->lock);
+        OSSpinLockUnlock(&right->lock);
+        OSSpinLockUnlock(&parent->lock);
+        return temp;
+    }
     
 	/* Harder case:  split a node in order
 	 * to preserve the B+ tree properties.
@@ -895,6 +1434,11 @@ node * insert_into_new_root(node * left, int key, node * right) {
 	root->parent = NULL;
 	left->parent = root;
 	right->parent = root;
+    
+    //This is unlock for new parent
+    OSSpinLockUnlock(&left->lock);
+    OSSpinLockUnlock(&right->lock);
+    
 	return root;
 }
 
@@ -911,6 +1455,7 @@ node * start_new_tree(int key, record * pointer) {
 	root->pointers[order - 1] = NULL;
 	root->parent = NULL;
 	root->num_keys++;
+    
 	return root;
 }
 
@@ -931,8 +1476,11 @@ node * insert( node * root, int key, int value ) {
 	 * duplicates.
 	 */
     
-	if (find(root, key, false) != NULL)
-		return root;
+	//if (find(root, key, false) != NULL)
+	//	return root;
+    
+    if(search_par(root, key))
+        return root;
     
 	/* Create a new record for the
 	 * value.
@@ -944,9 +1492,15 @@ node * insert( node * root, int key, int value ) {
 	 * Start a new tree.
 	 */
     
-	if (root == NULL)
-		return start_new_tree(key, pointer);
-    
+	if (root == NULL){
+	
+        if(OSSpinLockTry(&global_lock)){
+            return start_new_tree(key, pointer);
+            OSSpinLockUnlock(&global_lock);
+        }else{
+            while(global_lock!=0){};
+        }
+    }
     
 	/* Case: the tree already exists.
 	 * (Rest of function body.)
@@ -957,11 +1511,12 @@ node * insert( node * root, int key, int value ) {
 	/* Case: leaf has room for key and pointer.
 	 */
     
+    OSSpinLockLock(&leaf->lock);
 	if (leaf->num_keys < order - 1) {
 		leaf = insert_into_leaf(leaf, key, pointer);
-		return root;
+        OSSpinLockUnlock(&leaf->lock);
+  		return root;
 	}
-    
     
 	/* Case:  leaf must be split.
 	 */
@@ -1263,10 +1818,10 @@ node * delete_entry( node * root, node * n, int key, void * pointer ) {
     
 	/* Case:  deletion from the root.
 	 */
-    
+    /*
 	if (n == root)
 		return adjust_root(root);
-    
+    */
     
 	/* Case:  deletion from a node below the root.
 	 * (Rest of function body.)
@@ -1276,44 +1831,44 @@ node * delete_entry( node * root, node * n, int key, void * pointer ) {
 	 * to be preserved after deletion.
 	 */
     
-	min_keys = n->is_leaf ? cut(order - 1) : cut(order) - 1;
+//	min_keys = n->is_leaf ? cut(order - 1) : cut(order) - 1;
     
 	/* Case:  node stays at or above minimum.
 	 * (The simple case.)
 	 */
     
-	if (n->num_keys >= min_keys)
+//	if (n->num_keys >= min_keys)
 		return root;
     
-	/* Case:  node falls below minimum.
-	 * Either coalescence or redistribution
-	 * is needed.
-	 */
-    
-	/* Find the appropriate neighbor node with which
-	 * to coalesce.
-	 * Also find the key (k_prime) in the parent
-	 * between the pointer to node n and the pointer
-	 * to the neighbor.
-	 */
-    
-	neighbor_index = get_neighbor_index( n );
-	k_prime_index = neighbor_index == -1 ? 0 : neighbor_index;
-	k_prime = n->parent->keys[k_prime_index];
-	neighbor = neighbor_index == -1 ? n->parent->pointers[1] :
-    n->parent->pointers[neighbor_index];
-    
-	capacity = n->is_leaf ? order : order - 1;
-    
-	/* Coalescence. */
-    
-	if (neighbor->num_keys + n->num_keys < capacity)
-		return coalesce_nodes(root, n, neighbor, neighbor_index, k_prime);
-    
-	/* Redistribution. */
-    
-	else
-		return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);
+//	/* Case:  node falls below minimum.
+//	 * Either coalescence or redistribution
+//	 * is needed.
+//	 */
+//    
+//	/* Find the appropriate neighbor node with which
+//	 * to coalesce.
+//	 * Also find the key (k_prime) in the parent
+//	 * between the pointer to node n and the pointer
+//	 * to the neighbor.
+//	 */
+//    
+//	neighbor_index = get_neighbor_index( n );
+//	k_prime_index = neighbor_index == -1 ? 0 : neighbor_index;
+//	k_prime = n->parent->keys[k_prime_index];
+//	neighbor = neighbor_index == -1 ? n->parent->pointers[1] :
+//    n->parent->pointers[neighbor_index];
+//    
+//	capacity = n->is_leaf ? order : order - 1;
+//    
+//	/* Coalescence. */
+//    
+//	if (neighbor->num_keys + n->num_keys < capacity)
+//		return coalesce_nodes(root, n, neighbor, neighbor_index, k_prime);
+//    
+//	/* Redistribution. */
+//    
+//	else
+//		return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);
 }
 
 
@@ -1327,10 +1882,16 @@ node * delete(node * root, int key) {
     
 	key_record = find(root, key, false);
 	key_leaf = find_leaf(root, key, false);
+    
+    
 	if (key_record != NULL && key_leaf != NULL) {
-		root = delete_entry(root, key_leaf, key, key_record);
+        OSSpinLockLock(&key_leaf->lock);
+        root = delete_entry(root, key_leaf, key, key_record);
 		free(key_record);
+        OSSpinLockUnlock(&key_leaf->lock);
+        
 	}
+    
 	return root;
 }
 
@@ -1478,8 +2039,7 @@ int main( int argc, char ** argv ) {
 
 #define MAXITER 5000000
 
-pthread_mutex_t mutex;
-node* root;
+node* root = NULL;
 
 /* RANDOM GENERATOR */
 
@@ -1555,8 +2115,6 @@ void* do_bench (void* arguments)
     struct timeval start, end;
     struct arg_bench *args = arguments;
     
-    struct node* node;
-    
     max_iter = args->max_iter;
     b_size = args->size;
     pool = args->pool;
@@ -1578,28 +2136,13 @@ void* do_bench (void* arguments)
         
         switch (ops){
                 case 1:
-                    pthread_mutex_lock(&mutex);
-                    node = insert(root, val, val);
-                    pthread_mutex_unlock(&mutex);
-                    if(*(node->keys) == val) ret = 1;
-                    else ret = 0;
+                    ret  = insert_par(&root, val, val);
                     break;
-                
                 case 2:
-                    pthread_mutex_lock(&mutex);
-                    node = delete(root, val);
-                    pthread_mutex_unlock(&mutex);
-                    if(node != root) ret = 1;
-                    else ret = 0;
-                
+                    ret = delete_par(root, val);
                     break;
-                
                 case 3:
-                    pthread_mutex_lock(&mutex);
-                    node = find_leaf(root, val, false);
-                    pthread_mutex_unlock(&mutex);
-                    if (node != NULL) ret = 1;
-                    else ret = 0;
+                    ret = search_par(root, val);
                     break;
             default: exit(0); break;
         }
@@ -1760,12 +2303,13 @@ int benchmark(int threads, int size, float ins, float del){
 void initial_add (int num, int range) {
     int i = 0, j = 0;
     
+    //unsigned rand_temp=987;
+    
     while(i < num){
         j = (rand()%range) + 1;
-        insert(root, j, j);
-        i++;
+        i += insert_par(&root, j, j);
     }
-    
+
     /* TESTING CORRECTNESS */
     /*
      j = 1024;
@@ -1861,27 +2405,82 @@ srand((int)time(0));
 else
 srand(s);
 
+
 if (i > 0){
     fprintf(stderr,"Now pre-filling %d random elements...\n", i);
     initial_add(i, r);
     fprintf(stderr,"...Done!\n\n");
 }
 
+
+
+    start_benchmark(r, u, n, v);
+/*
+    insert_par(&root,18,18);
+    insert_par(&root,19,19);
+    insert_par(&root,12,12);
+    insert_par(&root,10,10);
+    insert_par(&root,11,11);
+    insert_par(&root,8,8);
+    insert_par(&root,15,15);
+    insert_par(&root,5,5);
+    insert_par(&root,17,17);
+ 
+    printf("\n");
+    print_tree(root);
+
     
-    node *test;
-//start_benchmark(r, u, n, v);
-    
-    test = insert(root, 10, 10);
-    
-    print_tree(test);
-    
-    test = find_leaf(root, 50, false);
-    
-    //test = delete(root, 50);
-    
-    print_tree(test);
+    insert_par(&root,2,2);
     
     
+    printf("\n");
+    print_tree(root);
+
+    
+    insert_par(&root,9,9);
+    insert_par(&root,1,1);
+    insert_par(&root,6,6);
+    insert_par(&root,7,7);
+    insert_par(&root,3,3);
+    
+   
+    insert_par(&root,13,13);
+    insert_par(&root,4,4);
+    insert_par(&root,20,20);
+    
+    
+    printf("\n");
+    print_tree(root);
+
+    
+    insert_par(&root,14,14);
+    
+    
+    
+    printf("\n");
+    print_tree(root);
+
+    insert_par(&root, 16,16);
+
+    printf("\n");
+    print_tree(root);
+
+    insert_par(&root, 10,10);
+    
+    printf("\n");
+    print_tree(root);
+
+
+    insert_par(&root, 13,13);
+    
+    printf("\n");
+    print_tree(root);
+
+    
+    if(search_par(root, 20))
+        printf("Found!\n");
+*/    
+
 return 0;
 }
 
