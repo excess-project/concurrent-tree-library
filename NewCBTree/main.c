@@ -50,7 +50,6 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-#include <libkern/OSAtomic.h>
 #include <pthread.h>
 
 
@@ -62,12 +61,12 @@
 
 
 // Default order is 4.
-#define DEFAULT_ORDER 4
+#define DEFAULT_ORDER 336
 
 // Minimum order is necessarily 3.  We set the maximum
 // order arbitrarily.  You may change the maximum order.
 #define MIN_ORDER 3
-#define MAX_ORDER 20
+#define MAX_ORDER 400
 
 // Constants for printing part or all of the GPL license.
 #define LICENSE_FILE "LICENSE.txt"
@@ -77,6 +76,49 @@
 #define LICENSE_CONDITIONS 1
 #define LICENSE_CONDITIONS_START 70
 #define LICENSE_CONDITIONS_END 625
+
+
+
+//Helper pthread spinlock function for MAC OS X (SLOW!!!)
+#if  defined(__APPLE__) && defined(__MACH__)
+
+#include <libkern/OSAtomic.h>
+
+typedef volatile OSSpinLock pthread_spinlock_t;
+
+#ifndef PTHREAD_PROCESS_SHARED
+# define PTHREAD_PROCESS_SHARED 1
+#endif
+#ifndef PTHREAD_PROCESS_PRIVATE
+# define PTHREAD_PROCESS_PRIVATE 2
+#endif
+
+static inline int pthread_spin_init(pthread_spinlock_t *lock, int pshared) {
+	*lock = OS_SPINLOCK_INIT;
+	return 0;
+}
+
+static inline int pthread_spin_destroy(pthread_spinlock_t *lock) {
+	return 0;
+}
+
+static inline int pthread_spin_lock(pthread_spinlock_t *lock) {
+	OSSpinLockLock(lock);
+    return 0;
+}
+
+static inline int pthread_spin_trylock(pthread_spinlock_t *lock) {
+	return !OSSpinLockTry(lock);
+}
+
+static inline int pthread_spin_unlock(pthread_spinlock_t *lock) {
+	OSSpinLockUnlock(lock);
+	return 0;
+}
+
+#endif
+//END: Helper pthread spinlock function for MAC OS X
+
 
 // TYPES.
 
@@ -131,7 +173,7 @@ typedef struct node {
 	int num_keys;
 	struct node * next; // Used for queue.
     
-    OSSpinLock lock;
+    pthread_spinlock_t lock;
     struct node * right_link;
     int high_key;
     
@@ -167,7 +209,7 @@ node * queue = NULL;
 bool verbose_output = false;
 
 // GLOBAL LOCK
-OSSpinLock global_lock = OS_SPINLOCK_INIT;
+pthread_spinlock_t global_lock;
 
 
 // FUNCTION PROTOTYPES.
@@ -292,8 +334,12 @@ int scannode(int key, struct node** temp, int leaf){
                 *temp = 0;
             else
                 *temp = (node *)A->pointers[i];
-        }else
-           *temp =  (node *)A->pointers[i];
+        }else{
+            //if(i == A->num_keys)
+            //     *temp = 0;
+            //else
+                *temp =  (node *)A->pointers[i];
+        }
         return 0;
     }
     
@@ -327,8 +373,8 @@ struct node* move_right(int key, struct node* t)
     struct node* current = t;
     if(current->high_key>0){
     while (scannode(key, &t, 0)) {
-        OSSpinLockLock(&t->lock);
-        OSSpinLockUnlock(&current->lock);
+        pthread_spin_lock(&t->lock);
+        pthread_spin_unlock(&current->lock);
         current = t;
     }
     }
@@ -353,10 +399,10 @@ int insert_par( node ** root, int key, int value ) {
     
 	if (*root == NULL){
         //Try lock the global tree
-        if(OSSpinLockTry(&global_lock)){
+        if(pthread_spin_trylock(&global_lock)==0){
             pointer = make_record(value);
             *root = start_new_tree(key, pointer);
-            OSSpinLockUnlock(&global_lock);
+            pthread_spin_unlock(&global_lock);
             return 1;
         }else{
             //Wait here first
@@ -376,7 +422,7 @@ int insert_par( node ** root, int key, int value ) {
             Stack_Push(&Nstack, temp);
     }
     
-    OSSpinLockLock(&current->lock);
+    pthread_spin_lock(&current->lock);
     current = move_right(key, current);
     
     //Now check whether the value exists
@@ -386,7 +432,7 @@ int insert_par( node ** root, int key, int value ) {
     if (i != current->num_keys){
         pointer = current->pointers[i];
         if (pointer->value == key){
-            OSSpinLockUnlock(&current->lock);
+            pthread_spin_unlock(&current->lock);
             return 0;
         }
     }
@@ -426,7 +472,7 @@ int insert_par( node ** root, int key, int value ) {
                 current->keys[insertion_index] = key;
                 current->num_keys++;
             }
-             OSSpinLockUnlock(&current->lock);
+             pthread_spin_unlock(&current->lock);
             return 1;
         } else {  // split
             
@@ -591,7 +637,7 @@ int insert_par( node ** root, int key, int value ) {
             }
             //Now we have to create a new root, restrict only 1 thread
             if(Nstack.size == 0){
-                if(OSSpinLockTry(&global_lock)){
+                if(pthread_spin_trylock(&global_lock)==0){
                     *root = make_node();
                     (*root)->keys[0] = key;
                     (*root)->pointers[0] = old_leaf;
@@ -600,8 +646,8 @@ int insert_par( node ** root, int key, int value ) {
                     (*root)->parent = NULL;
                     current->parent = *root;
                     new_leaf->parent = *root;
-                    OSSpinLockUnlock(&old_leaf->lock);
-                    OSSpinLockUnlock(&global_lock);
+                    pthread_spin_unlock(&old_leaf->lock);
+                    pthread_spin_unlock(&global_lock);
                     return 1;
                 }else{
                     //Others wait here first
@@ -611,11 +657,11 @@ int insert_par( node ** root, int key, int value ) {
             
             current = Stack_Pop(&Nstack);
             
-            OSSpinLockLock(&current->lock);
+            pthread_spin_lock(&current->lock);
             
             move_right(key, current);
             
-            OSSpinLockUnlock(&old_leaf->lock);
+            pthread_spin_unlock(&old_leaf->lock);
             
 
         }
@@ -639,7 +685,7 @@ int delete_par(node * root, int key) {
         scannode(key, &current, 0);
     }
     
-    OSSpinLockLock(&current->lock);
+    pthread_spin_lock(&current->lock);
     current = move_right(key, current);
     
     //Now check whether the value exists
@@ -677,11 +723,11 @@ int delete_par(node * root, int key) {
             else
                 for (i = current->num_keys + 1; i < order; i++)
                     current->pointers[i] = NULL;
-            OSSpinLockUnlock(&current->lock);
+            pthread_spin_unlock(&current->lock);
             return 1;
         }
     }
-    OSSpinLockUnlock(&current->lock);
+    pthread_spin_unlock(&current->lock);
     
 	return 0;
 }
@@ -1129,8 +1175,10 @@ node * make_node( void ) {
 	new_node->num_keys = 0;
 	new_node->parent = NULL;
 	new_node->next = NULL;
+    new_node->high_key = 0;
+    new_node->right_link = NULL;
     
-    new_node->lock = OS_SPINLOCK_INIT;
+    pthread_spin_init(&new_node->lock, PTHREAD_PROCESS_SHARED);
     
 	return new_node;
 }
@@ -1388,7 +1436,7 @@ node * insert_into_parent(node * root, node * left, int key, node * right) {
 	if (parent == NULL)
 		return insert_into_new_root(left, key, right);
     //else
-    //    OSSpinLockLock(&parent->lock);
+    //    pthread_spin_lock(&parent->lock);
     
 	/* Case: leaf or node. (Remainder of
 	 * function body.)
@@ -1406,9 +1454,9 @@ node * insert_into_parent(node * root, node * left, int key, node * right) {
     
 	if (parent->num_keys < order - 1){
 		struct node * temp = insert_into_node(root, parent, left_index, key, right);
-        OSSpinLockUnlock(&left->lock);
-        OSSpinLockUnlock(&right->lock);
-        OSSpinLockUnlock(&parent->lock);
+        pthread_spin_unlock(&left->lock);
+        pthread_spin_unlock(&right->lock);
+        pthread_spin_unlock(&parent->lock);
         return temp;
     }
     
@@ -1436,8 +1484,8 @@ node * insert_into_new_root(node * left, int key, node * right) {
 	right->parent = root;
     
     //This is unlock for new parent
-    OSSpinLockUnlock(&left->lock);
-    OSSpinLockUnlock(&right->lock);
+    pthread_spin_unlock(&left->lock);
+    pthread_spin_unlock(&right->lock);
     
 	return root;
 }
@@ -1494,9 +1542,9 @@ node * insert( node * root, int key, int value ) {
     
 	if (root == NULL){
 	
-        if(OSSpinLockTry(&global_lock)){
+        if(pthread_spin_trylock(&global_lock)==0){
             return start_new_tree(key, pointer);
-            OSSpinLockUnlock(&global_lock);
+            pthread_spin_unlock(&global_lock);
         }else{
             while(global_lock!=0){};
         }
@@ -1511,10 +1559,10 @@ node * insert( node * root, int key, int value ) {
 	/* Case: leaf has room for key and pointer.
 	 */
     
-    OSSpinLockLock(&leaf->lock);
+    pthread_spin_lock(&leaf->lock);
 	if (leaf->num_keys < order - 1) {
 		leaf = insert_into_leaf(leaf, key, pointer);
-        OSSpinLockUnlock(&leaf->lock);
+        pthread_spin_unlock(&leaf->lock);
   		return root;
 	}
     
@@ -1885,10 +1933,10 @@ node * delete(node * root, int key) {
     
     
 	if (key_record != NULL && key_leaf != NULL) {
-        OSSpinLockLock(&key_leaf->lock);
+        pthread_spin_lock(&key_leaf->lock);
         root = delete_entry(root, key_leaf, key, key_record);
 		free(key_record);
-        OSSpinLockUnlock(&key_leaf->lock);
+        pthread_spin_unlock(&key_leaf->lock);
         
 	}
     
@@ -2281,7 +2329,9 @@ int benchmark(int threads, int size, float ins, float del){
         result.counter_ins_s = result.counter_ins_s + arg->counter_ins_s;
         result.counter_search = result.counter_search + arg->counter_search;
         result.counter_search_s = result.counter_search_s + arg->counter_search_s;
-        result.timer = result.timer + arg->timer;
+        
+        if(arg->timer > result.timer)
+            result.timer = arg->timer;
         
         /*
          fprintf(stderr, "\n(%d): %ld,%ld,%ld,%ld", i, arg->counter_ins, arg->counter_del, arg->counter_search, arg->timer);
@@ -2307,7 +2357,10 @@ void initial_add (int num, int range) {
     
     while(i < num){
         j = (rand()%range) + 1;
+//        printf("insert_par(&root,%d,%d);\n", j, j);
+        
         i += insert_par(&root, j, j);
+        
     }
 
     /* TESTING CORRECTNESS */
@@ -2339,6 +2392,88 @@ void start_benchmark(int key_size, int updaterate, int num_thread, int v){
     benchmark(num_thread, key_size, update, update);
     
 }
+
+int *bulk;
+int nr;
+
+void* do_test (void* args){
+    
+    int *myid = (int*) args;
+    int i;
+    
+    int start = (MAXITER/nr) * (*myid);
+    int range = (MAXITER/nr);
+    int end = start + range;
+    
+    fprintf(stdout, "id:%d, s:%d, r:%d, e:%d\n", *myid, start, range, end);
+    
+    for (i = start; i < end; i++)
+        insert_par(&root, bulk[i], bulk[i]);
+    
+    pthread_exit((void*) args);
+}
+
+
+void test(int initial, int updaterate, int num_thread, int v){
+    
+    int i;
+    
+    pthread_t pid[num_thread];
+    int arg [num_thread];
+    
+    int allkey = MAXITER;
+    
+    nr = num_thread;
+    bulk = calloc(MAXITER, sizeof(int));
+    
+    for(i = 0; i < allkey; i++){
+        bulk[i] = rand()%MAXITER;
+    }
+    
+    for (i = 0; i<num_thread; i++){
+        arg[i] = i;
+        pthread_create (&pid[i], NULL, &do_test, &arg[i]);
+    }
+    
+    for (i = 0; i<num_thread; i++)
+        pthread_join (pid[i], NULL);
+    
+    for(i = 0; i < allkey; i++){
+        if(!search_par(root, bulk[i]))
+           fprintf(stderr, "Error!\n");
+    }
+
+}
+
+void testseq(){
+    
+    int i, count = 0;
+    struct timeval st,ed;
+    
+    printf("Inserting %d elements...\n", MAXITER);
+    
+    gettimeofday(&st, NULL);
+    
+    for(i = 0; i < MAXITER; i++){
+        insert_par(&root, i+1, i+1);
+    }
+    
+    gettimeofday(&ed, NULL);
+    
+    printf("time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
+    
+    //report_all((*universe->root)->a);
+    
+    for(i = 0; i < MAXITER; i++){
+        if(!search_par(root, i+1)){
+            count++;
+        }
+    }
+    
+    fprintf(stderr, "Error searching :%d!\n",count);
+    exit(0);
+}
+
 
 /*------------------- END BENCHMARK ---------------------*/
 
@@ -2405,6 +2540,12 @@ srand((int)time(0));
 else
 srand(s);
 
+    fprintf(stderr, "Node size: %lu bytes\n", sizeof(node) + ((order - 1) * sizeof(int)) + (order * sizeof(void *)) );
+
+    
+    pthread_spin_init(&global_lock, PTHREAD_PROCESS_SHARED);
+    
+    testseq();
 
 if (i > 0){
     fprintf(stderr,"Now pre-filling %d random elements...\n", i);
@@ -2413,10 +2554,33 @@ if (i > 0){
 }
 
 
-
     start_benchmark(r, u, n, v);
+    //test(r, u, n, v);
 /*
+    exit(0);
+    insert_par(&root,852487,852487);
+    insert_par(&root,1985045,1985045);
+    insert_par(&root,526638,526638);
+    insert_par(&root,1340775,1340775);
+    insert_par(&root,956436,956436);
+    insert_par(&root,1096838,1096838);
+    insert_par(&root,1850532,1850532);
+    insert_par(&root,1611330,1611330);
+    insert_par(&root,47161,47161);
+    insert_par(&root,1328108,1328108);
+    insert_par(&root,1398533,1398533);
+    insert_par(&root,1512053,1512053);
+    insert_par(&root,898214,898214);
+    insert_par(&root,85728,85728);
+    insert_par(&root,681742,681742);
+    printf("\n");
+    print_tree(root);
+
+    insert_par(&root,1439192,1439192);
+    
+    
     insert_par(&root,18,18);
+    
     insert_par(&root,19,19);
     insert_par(&root,12,12);
     insert_par(&root,10,10);
@@ -2479,66 +2643,7 @@ if (i > 0){
     
     if(search_par(root, 20))
         printf("Found!\n");
-*/    
+//*/
 
 return 0;
 }
-
-/*
-int main( int argc, char ** argv ) {
-    char * input_file;
-    FILE * fp;
-    size_t i;
- 
-    if (argc < 2) {
-        printf("Format: ./bpt.out <no. of txns> <optional input file>\n");
-        return 0;
-    }
- 
-    srand(time(NULL));
-    no_of_txns = (size_t)atoi(argv[1]);
-    pthread_mutex_init(&mutex, NULL);
- 
-    if (argc == 3) {
-        input_file = argv[2];
- 
-        fp = fopen(input_file, "r");
-        if (fp == NULL) {
-            perror("Failure to open input file.");
-            exit(EXIT_FAILURE);
-        }
-        int input;
-        while (!feof(fp)) {
-            fscanf(fp, "%d\n", &input);
-            root = insert(input, input);
-        }
-        fclose(fp);
-    } else {
-        for(i = 0; i < 10000; i++) {
-            root = insert(i, i);
-        }
-    }
-    
-    pthread_t tid[4];
-    
-    pthread_barrier_init(&barr, NULL, 4);
-#if 1
-    
-    TIMER_T startTime;
-    TIMER_READ(startTime);
-    
-    for (i = 0; i < 4; i++)
-    pthread_create(&tid[i], NULL, execute, NULL);
-    
-    for (i = 0; i < 4; i++)
-    pthread_join(tid[i], NULL);
-    
-    TIMER_T stopTime;
-    TIMER_READ(stopTime);
-    
-    printf("Numbers of transactions = %lu\n", no_of_txns*4);
-    printf("time = %f\n", TIMER_DIFF_SECONDS(startTime, stopTime));
-#endif
-    return EXIT_SUCCESS;
-}
-*/
