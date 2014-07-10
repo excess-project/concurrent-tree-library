@@ -2481,7 +2481,7 @@ void testseq(){
 
 int main( int argc, char ** argv ) {
 
-char myopt = 0;
+int myopt = 0;
 int s, u, n, i, t, r, v;       //Various parameters
 float d;
 
@@ -2545,7 +2545,7 @@ srand(s);
     
     pthread_spin_init(&global_lock, PTHREAD_PROCESS_SHARED);
     
-    testseq();
+    //testseq();
 
 if (i > 0){
     fprintf(stderr,"Now pre-filling %d random elements...\n", i);
