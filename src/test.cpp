@@ -296,7 +296,7 @@ void test(){
     TEST(cbtree::CBTree, "Counter Based Tree");
 }
 
-#define MAXITER     100000000
+#define MAXITER     5000000
 
 
 // RANGE: (1 - r)
@@ -519,8 +519,8 @@ int benchmark(unsigned int threads, int size, float ins, float del, int initial)
         result.counter_ins_s = result.counter_ins_s + arg->counter_ins_s;
         result.counter_search = result.counter_search + arg->counter_search;
         result.counter_search_s = result.counter_search_s + arg->counter_search_s;
-        result.timer = result.timer + arg->timer;
-        
+        if(arg->timer > result.timer)
+            result.timer = arg->timer;
     }
     
     fprintf(stderr, " %ld, %ld, %ld,", result.counter_ins, result.counter_del, result.counter_search);
@@ -556,6 +556,10 @@ void start_benchmark(int initial, int key_size, int updaterate, int num_thread, 
             case 14: benchmark<nbbst::NBBST<int, 14>, 14>(14, key_size, update, update, initial); break;
             case 15: benchmark<nbbst::NBBST<int, 15>, 15>(15, key_size, update, update, initial); break;
             case 16: benchmark<nbbst::NBBST<int, 16>, 16>(16, key_size, update, update, initial); break;
+            case 17: benchmark<nbbst::NBBST<int, 17>, 17>(17, key_size, update, update, initial); break;
+            case 18: benchmark<nbbst::NBBST<int, 18>, 18>(18, key_size, update, update, initial); break;
+            case 19: benchmark<nbbst::NBBST<int, 19>, 19>(19, key_size, update, update, initial); break;
+            case 20: benchmark<nbbst::NBBST<int, 20>, 20>(20, key_size, update, update, initial); break;
             default: break;
         }
     }else if(treetype == 1){
