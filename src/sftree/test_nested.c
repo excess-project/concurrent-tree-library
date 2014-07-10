@@ -121,7 +121,7 @@ inline long rand_range_re(unsigned int *seed, long r) {
     return (rand_r(seed) % r) + 1;
 }
 
-#define MAXITER 100000000
+#define MAXITER 5000000
 
 /* simple function for generating random integer for probability, only works on value of integer 1-100% */
 
@@ -952,25 +952,26 @@ int main(int argc, char **argv)
 	effupds = 0;
 	max_retries = 0;
 
-	long counter_ins = 0;
+        long counter_ins = 0;
         long counter_del = 0;
         long counter_search = 0;
         long counter_ins_s = 0;
         long counter_del_s = 0;
         long counter_search_s = 0;
-    long counter_time = 0;
+        long counter_time = 0;
 
 
         for (i = 0; i < nb_threads; i++) {
 
 
-        counter_ins += data[i].nb_add;
-        counter_del += data[i].nb_remove;
-        counter_search += data[i].nb_contains;
-        counter_ins_s += data[i].nb_added;
-        counter_del_s += data[i].nb_removed;
-        counter_search_s += data[i].nb_found;
-            counter_time += data[i].nb_time;
+            counter_ins += data[i].nb_add;
+            counter_del += data[i].nb_remove;
+            counter_search += data[i].nb_contains;
+            counter_ins_s += data[i].nb_added;
+            counter_del_s += data[i].nb_removed;
+            counter_search_s += data[i].nb_found;
+            if(data[i].nb_time > counter_time)
+                counter_time = data[i].nb_time;
 
 
 
