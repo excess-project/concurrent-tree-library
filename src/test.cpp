@@ -470,6 +470,8 @@ int benchmark(unsigned int threads, int size, float ins, float del, int initial)
         }));
     }
     
+    fprintf(stderr, "\n#TS: %i\n", (int) time(NULL));
+    
 #ifdef __USEPCM
     
     PCM * m = PCM::getInstance();
