@@ -2278,6 +2278,8 @@ int benchmark(int threads, int size, float ins, float del){
     
     pid = calloc(threads, sizeof(pthread_t));
     
+    fprintf(stderr, "\n#TS: %i\n", (int) time(NULL));
+    
 #ifdef __USEPCM
     
     PCM * m = PCM::getInstance();
