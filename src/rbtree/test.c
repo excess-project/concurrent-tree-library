@@ -546,6 +546,8 @@ int main(int argc, char **argv)
 			exit(1);
 		}*/
 
+    fprintf(stderr, "\n#TS: %i\n", (int) time(NULL));
+
 #ifdef __USEPCM
     
     PCM * m = PCM::getInstance();
