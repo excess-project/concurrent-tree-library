@@ -470,7 +470,9 @@ int benchmark(unsigned int threads, int size, float ins, float del, int initial)
         }));
     }
     
-    fprintf(stderr, "\n#TS: %i\n", (int) time(NULL));
+    struct timeval _ts;
+    gettimeofday(&_ts, NULL);
+    fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
     
 #ifdef __USEPCM
     
