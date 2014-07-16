@@ -2278,8 +2278,10 @@ int benchmark(int threads, int size, float ins, float del){
     
     pid = calloc(threads, sizeof(pthread_t));
     
-    fprintf(stderr, "\n#TS: %i\n", (int) time(NULL));
-    
+    struct timeval _ts;
+    gettimeofday(&_ts, NULL);
+    fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
+
 #ifdef __USEPCM
     
     PCM * m = PCM::getInstance();
