@@ -876,8 +876,10 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 
-    fprintf(stderr, "\n#TS: %i\n", (int) time(NULL));
-
+    struct timeval _ts;
+    gettimeofday(&_ts, NULL);
+    fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
+    
 #ifdef __USEPCM
     
     PCM * m = PCM::getInstance();
