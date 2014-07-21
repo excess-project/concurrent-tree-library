@@ -50,5 +50,5 @@ add_executable(btrees ${btrees_source_files})
 #add_executable(memory ${btrees_memory_source_files})
 #add_executable(gen_zip src/genzipf.cpp)
 
-target_link_libraries(btrees c++)
+target_link_libraries(btrees m)
 #target_link_libraries(gen_zip m)

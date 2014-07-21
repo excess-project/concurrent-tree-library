@@ -1,3 +1,6 @@
+#define _GNU_SOURCE
+#include <sched.h>
+
 #include <vector>
 #include <string>
 #include <iostream>
@@ -27,6 +30,9 @@ using namespace std;
 #include "avltree/AVLTree.hpp"
 #include "lfmst/MultiwaySearchTree.hpp"
 #include "cbtree/CBTree.hpp"
+
+#define __THREAD_PINNING 1
+pthread_barrier_t bench_barrier;
 
 //Number of nodes inserted in single-threaded mode
 #define ST_N 100000
@@ -388,7 +394,7 @@ int benchmark(unsigned int threads, int size, float ins, float del, int initial)
         std::cout << "Done" << std::endl << std::endl;
     }
     
-    
+    pthread_barrier_init(&bench_barrier,NULL,threads);
     
     for(i = 0; i< threads; i++){
         arg = &args[i];
@@ -432,6 +438,20 @@ int benchmark(unsigned int threads, int size, float ins, float del, int initial)
             static __thread int val = 0;
             static __thread int opsx, ret = 0;
             static __thread struct timeval start, end;
+            
+            
+#ifndef __APPLE__
+#if (__THREAD_PINNING == 1)
+            cpu_set_t cpuset;
+            CPU_ZERO(&cpuset);
+            CPU_SET(thread_num, &cpuset);
+            
+            pthread_t current_thread = pthread_self();
+            
+            fprintf(stdout, "Pinning to core %d... %s\n", thread_num, pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset)==0?"Success":"Failed");
+#endif
+#endif
+            pthread_barrier_wait(&bench_barrier);
             
             gettimeofday(&start, NULL);
             
