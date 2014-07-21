@@ -46,6 +46,9 @@
 
 // Uncomment the line below if you are compiling on Windows.
 // #define WINDOWS
+#define _GNU_SOURCE
+#include <sched.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -116,9 +119,78 @@ static inline int pthread_spin_unlock(pthread_spinlock_t *lock) {
 	return 0;
 }
 
+#ifndef PTHREAD_BARRIER_H_
+#define PTHREAD_BARRIER_H_
+
+#include <pthread.h>
+#include <errno.h>
+
+typedef int pthread_barrierattr_t;
+typedef struct
+{
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    int count;
+    int tripCount;
+} pthread_barrier_t;
+
+
+int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count)
+{
+    if(count == 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    if(pthread_mutex_init(&barrier->mutex, 0) < 0)
+    {
+        return -1;
+    }
+    if(pthread_cond_init(&barrier->cond, 0) < 0)
+    {
+        pthread_mutex_destroy(&barrier->mutex);
+        return -1;
+    }
+    barrier->tripCount = count;
+    barrier->count = 0;
+    
+    return 0;
+}
+
+int pthread_barrier_destroy(pthread_barrier_t *barrier)
+{
+    pthread_cond_destroy(&barrier->cond);
+    pthread_mutex_destroy(&barrier->mutex);
+    return 0;
+}
+
+int pthread_barrier_wait(pthread_barrier_t *barrier)
+{
+    pthread_mutex_lock(&barrier->mutex);
+    ++(barrier->count);
+    if(barrier->count >= barrier->tripCount)
+    {
+        barrier->count = 0;
+        pthread_cond_broadcast(&barrier->cond);
+        pthread_mutex_unlock(&barrier->mutex);
+        return 1;
+    }
+    else
+    {
+        pthread_cond_wait(&barrier->cond, &(barrier->mutex));
+        pthread_mutex_unlock(&barrier->mutex);
+        return 0;
+    }
+}
+
+#endif // PTHREAD_BARRIER_H_
+
 #endif
 //END: Helper pthread spinlock function for MAC OS X
 
+pthread_barrier_t bench_barrier;
+
+#define __THREAD_PINNING 1
 
 // TYPES.
 
@@ -2131,6 +2203,7 @@ void prepare_randintp(float ins, float del) {
 
 /* Struct for data input/output per-thread */
 struct arg_bench {
+    unsigned rank;
     int size;
     unsigned seed;
     unsigned seed2;
@@ -2168,6 +2241,20 @@ void* do_bench (void* arguments)
     pool = args->pool;
     
     //fprintf(stderr, "seed1:%d, seed2:%d, iter: %ld\n", args->seed, args->seed2, max_iter);
+    
+#ifndef __APPLE__
+#if (__THREAD_PINNING == 1)
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(args->rank, &cpuset);
+    
+    pthread_t current_thread = pthread_self();
+    
+    fprintf(stdout, "Pinning to core %d... %s\n", args->rank, pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset)==0?"Success":"Failed");
+#endif
+#endif
+    
+    pthread_barrier_wait(&bench_barrier);
     
     gettimeofday(&start, NULL);
     
@@ -2241,6 +2328,7 @@ int benchmark(int threads, int size, float ins, float del){
     
     for(i = 0; i< threads; i++){
         arg = &args[i];
+        arg->rank = i;
         arg->size = size;
         
         arg->update = ins + del;
@@ -2278,6 +2366,8 @@ int benchmark(int threads, int size, float ins, float del){
     
     pid = calloc(threads, sizeof(pthread_t));
     
+    pthread_barrier_init(&bench_barrier,NULL,threads);
+
     struct timeval _ts;
     gettimeofday(&_ts, NULL);
     fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
