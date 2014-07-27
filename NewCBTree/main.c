@@ -49,6 +49,8 @@
 #define _GNU_SOURCE
 #include <sched.h>
 
+#include <unistd.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -2326,9 +2328,20 @@ int benchmark(int threads, int size, float ins, float del){
     
     prepare_randintp(ins, del);
     
+    long ncores = sysconf( _SC_NPROCESSORS_ONLN );
+    int midcores = (int)ncores/2;
+    
     for(i = 0; i< threads; i++){
         arg = &args[i];
-        arg->rank = i;
+        
+        if(threads > midcores && threads < ncores){
+            if(i >= (threads/2))
+                arg->rank = i - (threads/2) + midcores;
+            else
+                arg->rank = i;
+        }else
+            arg->rank = i;
+        
         arg->size = size;
         
         arg->update = ins + del;
