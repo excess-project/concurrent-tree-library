@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include <sched.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include <vector>
 #include <string>
@@ -18,6 +20,75 @@
 using namespace std;
 
 #endif
+
+#ifdef __APPLE__
+
+#ifndef PTHREAD_BARRIER_H_
+#define PTHREAD_BARRIER_H_
+
+#include <pthread.h>
+#include <errno.h>
+
+typedef int pthread_barrierattr_t;
+typedef struct
+{
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    int count;
+    int tripCount;
+} pthread_barrier_t;
+
+
+int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count)
+{
+    if(count == 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+    if(pthread_mutex_init(&barrier->mutex, 0) < 0)
+    {
+        return -1;
+    }
+    if(pthread_cond_init(&barrier->cond, 0) < 0)
+    {
+        pthread_mutex_destroy(&barrier->mutex);
+        return -1;
+    }
+    barrier->tripCount = count;
+    barrier->count = 0;
+    
+    return 0;
+}
+
+int pthread_barrier_destroy(pthread_barrier_t *barrier)
+{
+    pthread_cond_destroy(&barrier->cond);
+    pthread_mutex_destroy(&barrier->mutex);
+    return 0;
+}
+
+int pthread_barrier_wait(pthread_barrier_t *barrier)
+{
+    pthread_mutex_lock(&barrier->mutex);
+    ++(barrier->count);
+    if(barrier->count >= barrier->tripCount)
+    {
+        barrier->count = 0;
+        pthread_cond_broadcast(&barrier->cond);
+        pthread_mutex_unlock(&barrier->mutex);
+        return 1;
+    }
+    else
+    {
+        pthread_cond_wait(&barrier->cond, &(barrier->mutex));
+        pthread_mutex_unlock(&barrier->mutex);
+        return 0;
+    }
+}
+
+#endif // PTHREAD_BARRIER_H_
+#endif // __APPLE__
 
 
 #include "test.hpp"
@@ -359,6 +430,7 @@ struct arg_bench {
     long timer;
     long *inputs;
     int *ops;
+    int threads;
 };
 
 template<typename T, unsigned int Threads>
@@ -423,13 +495,25 @@ int benchmark(unsigned int threads, int size, float ins, float del, int initial)
         
         arg->max_iter = ceil(MAXITER / threads);
         
+        arg->threads = threads;
+        
     }
+    
     
     std::vector<std::thread> pool;
     for(i = 0; i < threads; ++i){
         pool.push_back(std::thread([&args, &tree, i](){
-            
-            thread_num = i;
+            int threads = args[i].threads;
+            long ncores = sysconf( _SC_NPROCESSORS_ONLN );
+            int midcores = (int)ncores/2;
+
+            if(threads > midcores && threads < ncores){
+                if(i >= (threads/2))
+                    thread_num = i - (threads/2) + midcores;
+                else
+                    thread_num = i;
+            }else
+                    thread_num = i;
             
             //std::cout << "Done: " << i << " thread" << std::endl;
             
