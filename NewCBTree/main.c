@@ -2514,6 +2514,8 @@ void* do_test (void* args){
     
     fprintf(stdout, "id:%d, s:%d, r:%d, e:%d\n", *myid, start, range, end);
     
+    pthread_barrier_wait(&bench_barrier);
+    
     for (i = start; i < end; i++)
         insert_par(&root, bulk[i], bulk[i]);
     
@@ -2521,12 +2523,15 @@ void* do_test (void* args){
 }
 
 
-void test(int initial, int updaterate, int num_thread, int v){
+void test(int initial, int updaterate, int num_thread, int random){
     
     int i;
     
     pthread_t pid[num_thread];
     int arg [num_thread];
+    
+    struct timeval st,ed;
+    pthread_barrier_init(&bench_barrier, NULL, num_thread + 1);
     
     int allkey = MAXITER;
     
@@ -2534,7 +2539,10 @@ void test(int initial, int updaterate, int num_thread, int v){
     bulk = calloc(MAXITER, sizeof(int));
     
     for(i = 0; i < allkey; i++){
-        bulk[i] = rand()%MAXITER;
+        if(random)
+            bulk[i] = 1 + i;
+        else
+            bulk[i] = 1 + (rand()%MAXITER);
     }
     
     for (i = 0; i<num_thread; i++){
@@ -2542,8 +2550,16 @@ void test(int initial, int updaterate, int num_thread, int v){
         pthread_create (&pid[i], NULL, &do_test, &arg[i]);
     }
     
+    pthread_barrier_wait(&bench_barrier);
+    
+    gettimeofday(&st, NULL);
+    
     for (i = 0; i<num_thread; i++)
         pthread_join (pid[i], NULL);
+    
+    gettimeofday(&ed, NULL);
+    
+    printf("time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
     
     for(i = 0; i < allkey; i++){
         if(!search_par(root, bulk[i]))
@@ -2653,6 +2669,7 @@ srand(s);
     pthread_spin_init(&global_lock, PTHREAD_PROCESS_SHARED);
     
     //testseq();
+    //test(r, u, n, 0);
 
 if (i > 0){
     fprintf(stderr,"Now pre-filling %d random elements...\n", i);
@@ -2662,7 +2679,6 @@ if (i > 0){
 
 
     start_benchmark(r, u, n, v);
-    //test(r, u, n, v);
 /*
     exit(0);
     insert_par(&root,852487,852487);
