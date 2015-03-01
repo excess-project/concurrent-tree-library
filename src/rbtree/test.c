@@ -21,7 +21,10 @@
  * GNU General Public License for more details.
  */
 
+#define _GNU_SOURCE
+#include <sched.h>
 #include <math.h>
+
 #include "intset.h"
 
 #ifdef __USEPCM
@@ -166,7 +169,7 @@ typedef struct thread_data {
     unsigned int seed2;
     unsigned long nb_time;
     unsigned long nb_maxiter;
-	
+    unsigned tid;
 	intset_t *set;
 	barrier_t *barrier;
 } thread_data_t;
@@ -183,8 +186,14 @@ void *test(void *data) {
     
 	thread_data_t *d = (thread_data_t *)data;
 
-    gettimeofday(&start, NULL);
     
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(d->tid, &cpuset);
+    
+    pthread_t current_thread = pthread_self();
+    if(!pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset))
+        printf("Pinned to core %d\n", d->tid);
     
 	/* Create transaction */
 	TM_THREAD_ENTER();
@@ -192,6 +201,8 @@ void *test(void *data) {
 	/* Wait on barrier */
 	barrier_cross(d->barrier);
 	
+    gettimeofday(&start, NULL);
+    
 	/* Is the first op an update? */
 	unext = (rand_range_re(&d->seed, 100) - 1 < d->update);
 	
@@ -501,6 +512,7 @@ int main(int argc, char **argv)
 		for (i = 0; i < nb_threads; i++) {
 	       
 			printf("Creating thread %d\n", i);
+            data[i].tid = i;
 			data[i].first = last;
 			data[i].range = range;
 			data[i].update = update;

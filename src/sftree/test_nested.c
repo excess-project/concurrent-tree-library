@@ -23,6 +23,9 @@
  * GNU General Public License for more details.
  */
 
+#define _GNU_SOURCE
+#include <sched.h>
+
 #include <math.h>
 #include <unistd.h>
 #include "intset.h"
@@ -295,18 +298,27 @@ void *test(void *data) {
 
 	thread_data_t *d = (thread_data_t *)data;
 	id = d->id;
+    
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(id, &cpuset);
+    
+    pthread_t current_thread = pthread_self();
+    if(!pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset))
+        printf("Pinned to core %d\n", id);
+    
 	tloc = d->set->nb_committed;
 	
 #ifdef BIAS_RANGE
 	increase = d->range;
 #endif
 
-    gettimeofday(&start, NULL);
-    
 	/* Create transaction */
 	TM_THREAD_ENTER();
 	/* Wait on barrier */
 	barrier_cross(d->barrier);
+    
+    gettimeofday(&start, NULL);
 	
 	/* Is the first op an update? */
 	unext = (rand_range_re(&d->seed, 100) - 1 < d->update);
