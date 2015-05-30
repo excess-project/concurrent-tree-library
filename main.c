@@ -1,8 +1,14 @@
 /*
- *  bpt.c
- */
-#define Version "1.13"
-/*
+ CBTree - Lehman & Yao Concurrent Btree
+ 
+ Copyright 2013 Ibrahim Umar, University of Tromsø.
+ 
+ 
+ Adapted from:
+ bpt:  B+ Tree Implementation version 1.13
+
+ Original copyright below:
+ 
  *
  *  bpt:  B+ Tree Implementation
  *  Copyright (C) 2010  Amittai Aviram  http://www.amittai.com
@@ -819,6 +825,9 @@ int delete_par(node * root, int key) {
 
 /* Copyright and license notice to user at startup.
  */
+
+#define Version "1.13"
+
 void license_notice( void ) {
 	printf("bpt version %s -- Copyright (C) 2010  Amittai Aviram "
            "http://www.amittai.com\n", Version);
@@ -2539,10 +2548,10 @@ void test(int initial, int updaterate, int num_thread, int random){
     bulk = calloc(MAXITER, sizeof(int));
     
     for(i = 0; i < allkey; i++){
-        if(random)
-            bulk[i] = 1 + i;
+        if(!random)
+            bulk[i] = 1 + i +initial;
         else
-            bulk[i] = 1 + (rand()%MAXITER);
+            bulk[i] = 1 + (rand()%MAXITER) + initial;
     }
     
     for (i = 0; i<num_thread; i++){
@@ -2568,35 +2577,55 @@ void test(int initial, int updaterate, int num_thread, int random){
 
 }
 
+#define RANDOM 1
+
 void testseq(){
     
-    int i, count = 0;
-    struct timeval st,ed;
+  int i, count = 0, seed;
+  struct timeval st,ed; 
+  int values[MAXITER];
+
+  seed = time(NULL);
+  srand(seed);
+
+  for(i = 0; i < MAXITER; i++){
+        if(RANDOM)
+                values[i] = (rand()%MAXITER)+1;
+        else
+            	values[i] = i+1;
+  }
+
+  printf("Inserting %d (%s) elements...\n", MAXITER, (RANDOM?"Random":"Increasing"));
+
+  gettimeofday(&st, NULL);
+
+  for(i = 0; i < MAXITER; i++){
+        insert_par(&root, values[i], values[i]);
+  }
+
+  gettimeofday(&ed, NULL);
+
+  printf("insert time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
+
+  //report_all((*universe->root)->a);
     
-    printf("Inserting %d elements...\n", MAXITER);
-    
-    gettimeofday(&st, NULL);
-    
-    for(i = 0; i < MAXITER; i++){
-        insert_par(&root, i+1, i+1);
-    }
-    
-    gettimeofday(&ed, NULL);
-    
-    printf("time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
-    
-    //report_all((*universe->root)->a);
-    
-    for(i = 0; i < MAXITER; i++){
-        if(!search_par(root, i+1)){
+  srand(seed);
+
+  gettimeofday(&st, NULL);
+
+  for(i = 0; i < MAXITER; i++){
+        if(!search_par(root, values[i])){
             count++;
         }
-    }
-    
-    fprintf(stderr, "Error searching :%d!\n",count);
-    exit(0);
-}
+  }
 
+  gettimeofday(&ed, NULL);    
+  printf("search time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
+
+  fprintf(stderr, "Error searching :%d!\n",count);
+    
+  exit(0);
+}
 
 /*------------------- END BENCHMARK ---------------------*/
 
