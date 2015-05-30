@@ -1,0 +1,24 @@
+.bdsignore.all
+Makefile
+license.txt
+Doxyfile
+LICENSE
+README
+ChangeLog
+TODO
+Debug
+Release
+Intel_SSA
+My Inspector XE Results - pcm
+.gitignore
+.gitattributes
+.*\.txt
+.*\.pdf
+.*\.docx
+.*\.rtf
+.*\.vcproj
+.*\.xcodeproj
+.*\.sh
+.*\.htm
+.*\.bat
+.*\.strings
