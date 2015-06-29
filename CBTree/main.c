@@ -64,6 +64,11 @@
 #include <pthread.h>
 
 
+#ifdef __USEPCM
+#include "../benchcounters.h"
+#endif
+
+
 #ifdef WINDOWS
 #define bool char
 #define false 0
@@ -340,7 +345,7 @@ node * coalesce_nodes(node * root, node * n, node * neighbor, int neighbor_index
 node * redistribute_nodes(node * root, node * n, node * neighbor, int neighbor_index,
                           int k_prime_index, int k_prime);
 node * delete_entry( node * root, node * n, int key, void * pointer );
-node * delete( node * root, int key );
+node * _delete( node * root, int key );
 
 
 /*---------------START PARALEL------------------*/
@@ -2006,7 +2011,7 @@ node * delete_entry( node * root, node * n, int key, void * pointer ) {
 
 /* Master deletion function.
  */
-node * delete(node * root, int key) {
+node * _delete(node * root, int key) {
     
 	node * key_leaf;
 	record * key_record;
@@ -2094,7 +2099,7 @@ int main( int argc, char ** argv ) {
 		switch (instruction) {
             case 'd':
                 scanf("%d", &input);
-                root = delete(root, input);
+                root = _delete(root, input);
                 print_tree(root);
                 break;
             case 'i':
@@ -2395,13 +2400,7 @@ int benchmark(int threads, int size, float ins, float del){
     fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
 
 #ifdef __USEPCM
-    
-    PCM * m = PCM::getInstance();
-    
-    if (m->program() != PCM::Success) return 0;
-    
-    SystemCounterState before_sstate = getSystemCounterState();
-    
+	pcm_bench_start();    
 #endif
     
     fprintf(stderr, "\nStarting benchmark...");
@@ -2417,15 +2416,8 @@ int benchmark(int threads, int size, float ins, float del){
     
     
 #ifdef __USEPCM
-    
-    SystemCounterState after_sstate = getSystemCounterState();
-    
-    cout << "Instructions per clock: " << getIPC(before_sstate,after_sstate) << endl
-    << "L3 cache hit ratio: " << getL3CacheHitRatio(before_sstate,after_sstate) << endl
-    << "Bytes read: " << getBytesReadFromMC(before_sstate,after_sstate) << endl
-    << "Power used: " << getConsumedJoules(before_sstate,after_sstate) <<" joules"<< endl
-    << std::endl;
-    
+	pcm_bench_end();   
+	pcm_bench_print(); 
 #endif
     
     result.counter_del = 0;

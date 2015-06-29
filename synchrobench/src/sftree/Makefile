@@ -16,6 +16,8 @@ CFLAGS += -DTFAVLSEQ
 CFLAGS += -DNO_MAINTENANCE
 CFLAGS += -DMICROBENCH
 
+PCMS	:= ../../../intelpcm/cpucounters.o ../../../intelpcm/msr.o ../../../intelpcm/pci.o ../../../intelpcm/client_bw.o
+
 BINS = $(BINDIR)/lf-st $(BINDIR)/lf-st-move $(BINDIR)/lf-st-nest
 
 CFLAGS += -DNO_UNITLOADS
@@ -26,15 +28,19 @@ all:	main main_nest
 
 sftree.o:
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/sftree.o sftree.c
+	$(CXX) $(CFLAGS) -c -o $(BUILDIR)/sftree.pcm.o sftree.c
 
 intset.o: sftree.h
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/intset.o intset.c
+	$(CXX) $(CFLAGS) -c -o $(BUILDIR)/intset.pcm.o intset.c
 
 test.o: sftree.h intset.h
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test.o test.c
+	$(CXX) $(CFLAGS) -D__USEPCM -c -o $(BUILDIR)/test.pcm.o test.c
 
-main: sftree.o intset.o test.o 
+main: sftree.o intset.o test.o $(PCMS)
 	$(CC) $(CFLAGS) $(BUILDIR)/sftree.o $(BUILDIR)/intset.o $(BUILDIR)/test.o -o $(BINDIR)/lf-st $(LDFLAGS)
+	$(CXX) $(CFLAGS) $(BUILDIR)/sftree.pcm.o $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o $(BINDIR)/lf-st.pcm $(LDFLAGS)
 
 test_move.o: sftree.h intset.h
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test_move.o test_move.c
@@ -44,9 +50,11 @@ main_move: sftree.o intset.o test_move.o
 
 test_nested.o: sftree.h intset.h
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test_nested.o test_nested.c
+	$(CXX) $(CFLAGS) -D__USEPCM -c -o $(BUILDIR)/test_nested.pcm.o test_nested.c
 
-main_nest: sftree.o intset.o test_nested.o 
+main_nest: sftree.o intset.o test_nested.o $(PCMS) 
 	$(CC) $(CFLAGS) $(BUILDIR)/sftree.o $(BUILDIR)/intset.o $(BUILDIR)/test_nested.o -o $(BINDIR)/lf-st-nest $(LDFLAGS)
+	$(CXX) $(CFLAGS) $(BUILDIR)/sftree.pcm.o $(BUILDIR)/intset.pcm.o $(BUILDIR)/test_nested.pcm.o $(PCMS) -o $(BINDIR)/lf-st-nest.pcm $(LDFLAGS)
 
 
 clean:

@@ -37,68 +37,40 @@
 #define FULL    1
 
 #define PRE_ALLOC   1
-#define MAXITER     5000000 //5000000
-#define MAX_STACK   100
+#define MAXAUX      5000000
+#define MAXITER     5000000
 
 #define TIME_PER_BENCH 10
 
-static inline
-unsigned _val(unsigned x) {
-    return x & ~(1<<31);
-}
-
-static inline
-void set_mark(unsigned *value)
+struct __attribute__((__packed__)) node
 {
-    *value = *value | 1<<31;
-}
-
-static inline
-void unset_mark(unsigned *value)
-{
-    *value = *value & ~(1<<31);
-}
-
-static inline
-unsigned is_marked(unsigned value)
-{
-    return (value >> 31);
-}
-
-struct map{short left; short right; short parent;};
-
-extern struct map *_map;
-
-struct __attribute__((__packed__)) node_ref
-{
-    struct node_ref *left;
-    struct node_ref *right;
+    struct node *left;
+    struct node *right;
     unsigned tid;
     unsigned value;
     unsigned char mark;
 };
 
-struct __attribute__((__packed__)) node
-{
-    unsigned value;
-};
-
-
 struct aux_info
 {
-    volatile int lock;                      //Tree lock
+    unsigned lock;                      //Tree lock
+    unsigned op_count;                  //Tree operations for insert&delete
     int count_node;                     //sub-tree node count
+    int overflow;                       //child triangle count
+    unsigned b_lock;                    //lock for buffer
+    unsigned b_count;                   //buffer counter
+    struct node *root;
+    struct node *mirror;                //Placeholder for mirror tree
+    int *buffer;                       //[NUM_THREAD];       //buffer for multiple rearrange
+
 };
 
-struct deltaNode
+struct aux_table
 {
-    struct node* a;
-    struct deltaNode** b;
-    struct aux_info* info;
-    
-    int high_key;
-    struct deltaNode *sibling;
-    char isleaf;
+    unsigned init_lock;
+    unsigned last_tid;
+    unsigned alloc_ed;
+    struct aux_info *row;               //[MAXINT];
 };
 
 
@@ -108,64 +80,57 @@ struct global
 	int max_depth;
 	int nodecnt;
     int maxcnt;
-    
-    int split_thres;
-    
+    float density;
+    float *iratio;
     int count_ins;
     int count_del;
 	int failed_ins;
     int failed_del;
 	int rebalance_done_ins;
     int rebalance_done_del;
-	int nb_thread;
-    volatile int lock;
-    struct deltaNode **root;
-    struct node_ref *ref;
+	int merging_done;
+    int nb_thread;
+    struct node *root;
+    struct aux_table aux;
 };
 
-struct stack{
-    int num;
-    struct deltaNode* parent[MAX_STACK];
-};
 
-int push(struct stack *stk, void* parent);
-struct deltaNode* pop(struct stack *stk);
-
-
-typedef int indext;
-
-extern char *optarg;
-extern int optind, opterr, optopt;
-typedef int domain;
-volatile domain res;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* Array Operations */
 void print_int_array(const int *array, size_t len);
 int int_cmp(const void *a, const void *b);
 void sort_all(int* array, long size);
 void blank_int_array(int *array, size_t len);
-void create_rec( struct node_ref **p, int n, struct node_ref **mine, int *last, int u);
+void create_rec( struct node **p, int n, struct node **mine, int *last, int u);
 
-inline void* left(void* p, void* base, size_t nodesize);
-inline void* right(void* p, void* base, size_t nodesize);
 
 /* Tree Operations */
-int insert_par( struct global *universe, int key);
-int insertNode_lo(struct global* universe, int val);
-int searchNode_lo(struct global* universe, int val);
-int deleteNode_lo(struct global* universe, int val);
 
-
-void init_global(struct global *universe);
-void create_map( struct node_ref *p, int size );
-void initial_add (struct global *universe, int num, int range);
-
-void report_all( struct node *p );
-
-int rand_range_re(unsigned int *seed, long r);
+void printMaxMin(struct global *universe);
 void printStat(struct global *universe);
+void traverse_all(struct global *universe, int show);
+void init_global(struct global *universe);
+
+struct node * smart_it_search( struct node *p, int val);
+int insertNode(struct global* universe, int val);
+int deleteNode(struct global* universe, int val);
+int searchNode(struct global* universe, int val);
+int reArrange(struct node *root, struct node *mirror, int* extraBuf, int countBuf, int trsize, int nb_thread, int overflow);
+int fill_val_imp( struct node *p , int *array, int* cnt, int *shift, int *lastval, int tdepth, int mindepth, int maxdepth, int maxcount);
+void travNode(struct node *p, int lastval, int mark, void (*cb)(void*), long * travcount, long* allcount);
+
 
 void nop(void *null);
+int rand_range_re(unsigned int *seed, long r);
+void build_balanced_height(struct global *unv, struct node *p, int height, int start);
+
+
+#ifdef __cplusplus
+}
+#endif
 
 
 #endif

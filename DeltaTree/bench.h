@@ -30,8 +30,7 @@
 
 #ifdef __USEPCM
 
-#include "../intelpcm/cpucounters.h"
-using namespace std;
+#include "../benchcounters.h"
 
 #endif
 
@@ -74,11 +73,11 @@ void prepare_randintp(float ins, float del) {
     }
     
     /*
-    fprintf(stderr,"\n");
-    for (i = 0; i < MAX_POOL; i++)
-        fprintf(stderr, "%d, ", p_pool[i]);
-    fprintf(stderr,"\n");
-    */
+     fprintf(stderr,"\n");
+     for (i = 0; i < MAX_POOL; i++)
+     fprintf(stderr, "%d, ", p_pool[i]);
+     fprintf(stderr,"\n");
+     */
 }
 
 /* SIGNALS */
@@ -136,7 +135,7 @@ void* do_bench (void* arguments)
     pool = args->pool;
     
     //fprintf(stderr, "seed1:%d, seed2:%d, iter: %ld\n", args->seed, args->seed2, max_iter);
-
+    
 #ifndef __APPLE__
 #if (__THREAD_PINNING == 1)
     cpu_set_t cpuset;
@@ -150,7 +149,7 @@ void* do_bench (void* arguments)
 #endif
     
     pthread_barrier_wait(&bench_barrier);
-
+    
     gettimeofday(&start, NULL);
     
     /* Check the flag once in a while to see when to quit. */
@@ -165,9 +164,9 @@ void* do_bench (void* arguments)
         DEBUG_PRINT("ops:%d, val:%d\n", ops, val);
         
         switch (ops){
-            case 1: ret = insertNode(universe, val); break;
-            case 2: ret = deleteNode(universe, val); break;
-            case 3: ret = searchNode(universe, val); break;
+            case 1: ret = insert_par(universe, val); break;
+            case 2: ret = deleteNode_lo(universe, val); break;
+            case 3: ret = searchNode_lo(universe, val); break;
             default: exit(0); break;
         }
         cont++;
@@ -178,7 +177,7 @@ void* do_bench (void* arguments)
     }
     
     gettimeofday(&end, NULL);
-
+    
     args->counter_ins = counter[0];
     args->counter_del = counter[1];
     args->counter_search = counter[2];
@@ -207,12 +206,12 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
     struct arg_bench *args, *arg;
     
     struct arg_bench result;
-
+    
     args = calloc(threads, sizeof(struct arg_bench));
     
     inputs = calloc(size, sizeof(long));
     ops = calloc(size, sizeof(int));
-
+    
     prepare_randintp(ins, del);
     
     long ncores = sysconf( _SC_NPROCESSORS_ONLN );
@@ -241,7 +240,7 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
         arg->counter_ins = 0;
         arg->counter_del = 0;
         arg->counter_search = 0;
-    
+        
         arg->counter_ins_s = 0;
         arg->counter_del_s = 0;
         arg->counter_search_s = 0;
@@ -256,13 +255,13 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
     }
     
     
-   /*
-    for(j = 0; j < size; j++)
-        inputs[j] = (rand() % size) + 1;
-    
-    for(j = 0; j < size; j++)
-        ops[j] =  p_pool[(rand() % 100)];
-    */
+    /*
+     for(j = 0; j < size; j++)
+     inputs[j] = (rand() % size) + 1;
+     
+     for(j = 0; j < size; j++)
+     ops[j] =  p_pool[(rand() % 100)];
+     */
     pid = calloc(threads, sizeof(pthread_t));
     
     //keep_going = 1;             //reset the flag
@@ -280,13 +279,7 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
     fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
     
 #ifdef __USEPCM
-    
-    PCM * m = PCM::getInstance();
-    
-    if (m->program() != PCM::Success) return 0;
-    
-    SystemCounterState before_sstate = getSystemCounterState();
-    
+	pcm_bench_start();
 #endif
     
     fprintf(stderr, "\nStarting benchmark...");
@@ -302,15 +295,8 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
     
     
 #ifdef __USEPCM
-    
-    SystemCounterState after_sstate = getSystemCounterState();
-    
-    cout << "Instructions per clock: " << getIPC(before_sstate,after_sstate) << endl
-    << "L3 cache hit ratio: " << getL3CacheHitRatio(before_sstate,after_sstate) << endl
-    << "Bytes read: " << getBytesReadFromMC(before_sstate,after_sstate) << endl
-    << "Power used: " << getConsumedJoules(before_sstate,after_sstate) <<" joules"<< endl
-    << std::endl;
-    
+	pcm_bench_end();   
+	pcm_bench_print();     
 #endif
     
     result.counter_del = 0;
@@ -335,9 +321,9 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
             result.timer = arg->timer;
         
         /*
-        fprintf(stderr, "\n(%d): %ld,%ld,%ld,%ld", i, arg->counter_ins, arg->counter_del, arg->counter_search, arg->timer);
-        fprintf(stderr, "\n(%d): %ld,%ld,%ld,%ld", i, arg->counter_ins_s, arg->counter_del_s, arg->counter_search_s, arg->timer);
-        */
+         fprintf(stderr, "\n(%d): %ld,%ld,%ld,%ld", i, arg->counter_ins, arg->counter_del, arg->counter_search, arg->timer);
+         fprintf(stderr, "\n(%d): %ld,%ld,%ld,%ld", i, arg->counter_ins_s, arg->counter_del_s, arg->counter_search_s, arg->timer);
+         */
     }
     
     fprintf(stderr, " %ld, %ld, %ld,", result.counter_ins, result.counter_del, result.counter_search);
@@ -351,105 +337,6 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
     return 0;
 }
 
-void initial_add (struct global* universe, int num, int range) {
-    int i = 0, j = 0;
-    while(i < num){
-        j = (rand()%range) + 1;
-        if(insertNode(universe, j))
-            i++;
-    }
-}
-
-int rec_update_counters(struct node* tree, struct global* universe){
-    
-    unsigned currID;
-    long travcount = 0; long allcount = 0;
-    
-    if(!tree) return 0;
-    
-    if(tree->tid > 0){                            //We have finished with the current tree, now move on
-        currID = (unsigned)tree->tid;             //Get the current tree ID
-        
-        travNode(tree, EMPTY, 0, nop, &travcount, &allcount);
-        if(travcount > universe->max_node)
-            universe->aux.row[currID-1].count_node = (int)(universe->max_node+1)/2;
-        else
-            universe->aux.row[currID-1].count_node = (int)travcount;
-        
-        //fprintf(stderr,"Tree ID %d, count is: %d\n", currID, universe->aux.row[currID-1].count_node);
-    }
-    rec_update_counters(tree->left, universe);
-    rec_update_counters(tree->right, universe);
-    
-    
-    return 0;
-}
-
-void initial_add_balanced (struct global* universe, int num, int range, int validate) {
-    int count = num;
-    int shift = num;
-    int lastval = 0;
-    int *buffer, *initial;
-    
-    int mindepth, maxdepth;
-    
-    int ii, jj, value;
-    
-    
-    mindepth = maxdepth = (int)ceil(log(num)/log(2)+1);
-    
-    //fprintf(stderr, "maxdepth, mindepth, space: %d, %d, %d\n", maxdepth, mindepth, universe->max_depth);
-    
-    if(universe->max_depth < maxdepth)
-        build_balanced_height(universe, universe->aux.row[0].root, maxdepth, 0);
-    
-    //Make index of range...
-    initial = malloc(sizeof(int)*range);
-    for(ii = 0; ii < range; ii++)
-        initial[ii] = ii + 1;
-    
-    //...shuffle it...
-    for(ii=range-1; ii > 1; ii--){
-        jj = rand()%range;
-        value = initial[jj];
-        initial[jj] = initial[ii];
-        initial [ii] = value;
-    }
-    
-    //...and finally fill the buffer
-    buffer = malloc(sizeof(int)* num);
-    
-    for(ii = 0; ii < count;ii++){
-        buffer[ii] = initial[ii];
-    }
-    
-    sort_all(buffer, num);
-    
-    //print_int_array(buffer, num);
-    
-    fill_val_imp(universe->aux.row[0].root, buffer, &count, &shift, &lastval, 0, mindepth, maxdepth, count);
-    
-    count = num;
-    
-    if(validate)
-        for(ii=0 ; ii<count ; ii++){
-            if(!searchNode(universe, buffer[ii] )){
-                fprintf(stderr, "Error during building and prefilling a balanced tree!");
-                exit(1);
-            }
-        }
-    free(initial);
-    free(buffer);
-    
-    /* Update the counters */
-    universe->nodecnt = num;
-    universe->maxcnt = num;
-     
-    //Recursively update counters on each DeltaNode
-    rec_update_counters(universe->aux.row[0].root, universe);
-}
-
-
 void start_benchmark(struct global *universe, int key_size, int updaterate, int num_thread, int v){
     
     float update = (float)updaterate/2;
@@ -457,127 +344,69 @@ void start_benchmark(struct global *universe, int key_size, int updaterate, int 
     benchmark(universe, num_thread, key_size, update, update);
     
     if(!v){
-        //Calculate number of triangle and min/max height
-        printMaxMin(universe);
-    
-        //Calculate number of node
-        
-        //travcount = 0; allcount = 0;
-        //travNode(universe->root, EMPTY, 0, nop); fprintf(stderr,"=> %d, %d\n", travcount, allcount);
-        
-        //Print op stats
         printStat(universe);
-        
     }
 }
 
-/* Various Bench Functions */
+//MISC
+int *bulk;
+int nr;
 
+struct global *untest;
 
-void *t_add (struct global* universe, int range) {
-    int i = 0, j = 0, k = 0;
-    for(i=0;i<1000000;i++) {
-        j = (rand()%range) + 1;
-        if(insertNode(universe, j)){
-            //fprintf(stderr, "%d ", j);
-            k++;
-        }
-    }
-    //fprintf(stderr, "=>%d successful addition.\n\n", k);
-    return NULL;
-}
-
-void *t_del (struct global* universe, int range) {
-    int i, j, k = 0;
-    for(i=0;i<1000000;i++) {
-        j = (rand()%range) + 1;
-        if(deleteNode(universe, j)){
-            fprintf(stderr, "%d ", j);
-            k++;
-        }
-    }
-    fprintf(stderr, "=>%d successful deletion.\n\n", k);
-    return NULL;
-}
-
-void *t_find (struct global* universe, int range) {
+void* do_test (void* args){
+    
+    int *myid = (int*) args;
     int i;
-    for(i=0;i<1000000;i++) searchNode(universe, (rand()%range) + 1);
-    return NULL;
+    
+    int start = (MAXITER/nr) * (*myid);
+    int range = (MAXITER/nr);
+    int end = start + range;
+    
+    fprintf(stdout, "id:%d, s:%d, r:%d, e:%d\n", *myid, start, range, end);
+    
+    for (i = start; i < end; i++){
+        //fprintf(stderr, "i:%d (%d)\n", i, bulk[i]);
+        //insertNode_lo(untest,  bulk[i]);
+        insert_par(untest,  bulk[i]);
+    }
+    pthread_exit((void*) args);
 }
 
-// Additional tests (for correctness)
-
-void *testall(struct global *universe){
-
-int ii = 0, result = 0;
-int temp;
-struct node * p;
+void test(int initial, int updaterate, int num_thread, int v){
     
-unsigned seed, seed_seed;
-
-seed_seed = rand();
+    int i, count = 0;
     
-seed = seed_seed;
+    pthread_t pid[num_thread];
+    int arg [num_thread];
     
-fprintf(stderr, "Seed: %u\n", seed);
-
-for(ii=100000; ii >= 1; ii--){
-    //temp = ii + 1;
-    //fprintf(stderr, "-----$ %d insert\n", ii);
+    int allkey = MAXITER;
     
-    temp = (rand_r(&seed)) + 1;
-    insertNode(universe, temp);
-  
-    //if(!result)
-    //    fprintf(stderr, "-----$ %ld failed insert\n", temp);
+    nr = num_thread;
+    bulk = calloc(MAXITER, sizeof(int));
     
-    /*
-    p = smart_it_search(universe->aux.row[0].root, temp);
+    for(i = 0; i < allkey; i++){
+        bulk[i] = 1 + (rand()%MAXITER);
+    }
     
-    if (p->value == temp)
-        fprintf(stderr, "-----$ %ld Inserted and found\n", p->value);
-    else
-        fprintf(stderr, "-----$ Error inserting: %ld, found %ld (%d)\n", temp, p->value, ii);*/
-}
+    for (i = 0; i<num_thread; i++){
+        arg[i] = i;
+        pthread_create (&pid[i], NULL, &do_test, &arg[i]);
+    }
     
-sleep(10);          //Wait for completion
-
-seed = seed_seed;
-
-for(ii=100000; ii >= 1; ii--){
-    //temp = ii + 1;
-    temp = (rand_r(&seed)) + 1;
-    p = smart_it_search(universe->aux.row[0].root, temp);
-    
-    if (p->value == temp )
-        fprintf(stderr, "-----$ %d found !\n", p->value);
-    else
-        fprintf(stderr, "-----$ Error finding: %d, found %d\n", temp, p->value);
-}
-
-seed = seed_seed;
-
-for(ii=100000; ii >= 1; ii--){
-    //temp = ii + 1;
-    temp = (rand_r(&seed)) + 1;
-    result = deleteNode(universe, temp);
-    p = smart_it_search(universe->aux.row[0].root, temp);
-    if (!result || p->value != temp || (p->value == temp && p->mark == 1))
-        fprintf(stderr, "-----$ %d found and deleted \n", p->value);
-    else
-        fprintf(stderr, "-----$ Error deleting: %d, found %d, mark: %d\n", temp, p->value, p->mark);
-}
+    for (i = 0; i<num_thread; i++)
+        pthread_join (pid[i], NULL);
     
     
-    traverse_all(universe, 0);
-    printMaxMin(universe);
-    printStat(universe);
+    report_all((*untest->root)->a);
     
-    //report_all(universe->aux.row[0].root);
+    for(i = 0; i < allkey; i++){
+        if(!searchNode_lo(untest, bulk[i])){
+            count++;
+        }
+    }
+    fprintf(stderr, "Error searching :%d!\n",count);
     
-    pthread_exit(NULL);
-
 }
 
 #endif

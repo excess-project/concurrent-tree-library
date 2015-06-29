@@ -15,7 +15,7 @@ if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
   endif()
 elseif(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O2 -D_REENTRANT -fno-strict-aliasing -funroll-loops -pthread -std=c++0x -pedantic -Wall -Wextra -Wno-long-long")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O3 -D_REENTRANT -fno-strict-aliasing -funroll-loops -pthread -std=c++0x -pedantic -Wall -Wextra -Wno-long-long")
     #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O2 -march=native -funroll-loops -pthread -std=c++0x -pedantic -Wall -Wextra -Wno-long-long")
     #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -pthread -std=c++0x -pedantic -Wall -Wextra -Wno-long-long")
 endif()
@@ -36,6 +36,15 @@ file(
 	src/*.cpp
 )
 
+file(
+     	GLOB_RECURSE
+        pcm_source_files
+        ../intelpcm/pci.cpp
+	../intelpcm/cpucounters.cpp
+	../intelpcm/msr.cpp
+	../intelpcm/client_bw.cpp
+)
+
 file(GLOB to_remove src/genzipf.cpp)
 list(REMOVE_ITEM btrees_memory_source_files ${to_remove})
 list(REMOVE_ITEM btrees_source_files ${to_remove})
@@ -47,6 +56,8 @@ file(GLOB to_remove src/main.cpp)
 list(REMOVE_ITEM btrees_memory_source_files ${to_remove})
 
 add_executable(btrees ${btrees_source_files})
+add_executable(btrees.pcm ${btrees_source_files} ${pcm_source_files})
+SET_TARGET_PROPERTIES(btrees.pcm PROPERTIES COMPILE_FLAGS -D__USEPCM )
 #add_executable(memory ${btrees_memory_source_files})
 #add_executable(gen_zip src/genzipf.cpp)
 

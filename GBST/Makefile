@@ -1,10 +1,12 @@
-TARGET  := CBTree
-TARGET-P:= CBTree.pcm 
+TARGET  := GBST
+TARGET-P:= GBST.pcm 
 SRCS    := main.c  
 OBJS    := ${SRCS:.c=.o}
 OBJS-P  := ${SRCS:.c=.pcm.o}
 
 PCMS	:= ../intelpcm/cpucounters.o ../intelpcm/msr.o ../intelpcm/pci.o ../intelpcm/client_bw.o
+
+PREC	:= tree.o
 
 CCFLAGS = -g -O3 -DNDEBUG -D_REENTRANT -Wall -funroll-loops -fno-strict-aliasing
 CXXFLAGS = ${CCFLAGS} -fpermissive -I../intelpcm -D__USEPCM

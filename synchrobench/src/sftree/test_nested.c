@@ -32,8 +32,7 @@
 
 #ifdef __USEPCM
 
-#include "cpucounters.h"
-using namespace std;
+#include "../../benchcounters.h"
 
 #endif
 
@@ -892,18 +891,15 @@ int main(int argc, char **argv)
     gettimeofday(&_ts, NULL);
     fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
     
-#ifdef __USEPCM
-    
-    PCM * m = PCM::getInstance();
-    
-    if (m->program() != PCM::Success) return 0;
-    
-    SystemCounterState before_sstate = getSystemCounterState();
-    
-#endif
 	
 	// Start threads 
 	barrier_cross(&barrier);
+
+#ifdef __USEPCM
+    
+	pcm_bench_start();
+    
+#endif
 	
 	printf("STARTING...\n");
 	gettimeofday(&start, NULL);
@@ -932,6 +928,11 @@ int main(int argc, char **argv)
 	}
 
 
+#ifdef __USEPCM
+	pcm_bench_end();
+#endif
+
+
 	// Wait for maintenance thread completion 
 	for (i = 0; i < nb_maintenance_threads; i++) {
 		if (pthread_join(maintenance_threads[i], NULL) != 0) {
@@ -940,17 +941,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-#ifdef __USEPCM
-    
-    SystemCounterState after_sstate = getSystemCounterState();
-    
-    cout << "Instructions per clock: " << getIPC(before_sstate,after_sstate) << endl
-    << "L3 cache hit ratio: " << getL3CacheHitRatio(before_sstate,after_sstate) << endl
-    << "Bytes read: " << getBytesReadFromMC(before_sstate,after_sstate) << endl
-    << "Power used: " << getConsumedJoules(before_sstate,after_sstate) <<" joules"<< endl
-    << std::endl;
-    
-#endif
 	
 	duration = (end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
 	aborts = 0;

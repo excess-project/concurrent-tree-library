@@ -29,13 +29,11 @@
 #define __THREAD_PINNING 1
 
 #ifdef __USEPCM
-
-#include "../intelpcm/cpucounters.h"
-using namespace std;
-
+#include "../benchcounters.h"
 #endif
 
 #include "common.h"
+#include "locks.h"
 
 void *t_add (struct global* universe, int range);
 
@@ -220,6 +218,7 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
     
     for(i = 0; i< threads; i++){
         arg = &args[i];
+        
         if(threads > midcores && threads < ncores){
             if(i >= (threads/2))
                 arg->rank = i - (threads/2) + midcores;
@@ -227,6 +226,7 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
                 arg->rank = i;
         }else
             arg->rank = i;
+        
         arg->size = size;
         arg->universe = universe;
         
@@ -280,13 +280,7 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
     fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
     
 #ifdef __USEPCM
-    
-    PCM * m = PCM::getInstance();
-    
-    if (m->program() != PCM::Success) return 0;
-    
-    SystemCounterState before_sstate = getSystemCounterState();
-    
+	pcm_bench_start();    
 #endif
     
     fprintf(stderr, "\nStarting benchmark...");
@@ -302,15 +296,8 @@ int benchmark(struct global* universe, int threads, int size, float ins, float d
     
     
 #ifdef __USEPCM
-    
-    SystemCounterState after_sstate = getSystemCounterState();
-    
-    cout << "Instructions per clock: " << getIPC(before_sstate,after_sstate) << endl
-    << "L3 cache hit ratio: " << getL3CacheHitRatio(before_sstate,after_sstate) << endl
-    << "Bytes read: " << getBytesReadFromMC(before_sstate,after_sstate) << endl
-    << "Power used: " << getConsumedJoules(before_sstate,after_sstate) <<" joules"<< endl
-    << std::endl;
-    
+	pcm_bench_end();   
+	pcm_bench_print();     
 #endif
     
     result.counter_del = 0;
@@ -362,7 +349,6 @@ void start_benchmark(struct global *universe, int key_size, int updaterate, int 
     }
 }
 
-//MISC
 int *bulk;
 int nr;
 
@@ -379,20 +365,24 @@ void* do_test (void* args){
     
     fprintf(stdout, "id:%d, s:%d, r:%d, e:%d\n", *myid, start, range, end);
     
+    pthread_barrier_wait(&bench_barrier);
+    
     for (i = start; i < end; i++){
-        //fprintf(stderr, "i:%d (%d)\n", i, bulk[i]);
-        //insertNode_lo(untest,  bulk[i]);
+        
         insert_par(untest,  bulk[i]);
     }
     pthread_exit((void*) args);
 }
 
-void test(int initial, int updaterate, int num_thread, int v){
+void test(int initial, int updaterate, int num_thread, int v, int random){
     
     int i, count = 0;
+    struct timeval st,ed;
+    pthread_barrier_init(&bench_barrier, NULL, num_thread + 1);
     
     pthread_t pid[num_thread];
     int arg [num_thread];
+    
     
     int allkey = MAXITER;
     
@@ -400,7 +390,10 @@ void test(int initial, int updaterate, int num_thread, int v){
     bulk = calloc(MAXITER, sizeof(int));
     
     for(i = 0; i < allkey; i++){
-        bulk[i] = 1 + (rand()%MAXITER);
+        if(!random)
+            bulk[i] = 1 + i;
+        else
+            bulk[i] = 1 + (rand()%MAXITER);
     }
     
     for (i = 0; i<num_thread; i++){
@@ -408,11 +401,18 @@ void test(int initial, int updaterate, int num_thread, int v){
         pthread_create (&pid[i], NULL, &do_test, &arg[i]);
     }
     
+    pthread_barrier_wait(&bench_barrier);
+    
+    gettimeofday(&st, NULL);
+    
     for (i = 0; i<num_thread; i++)
         pthread_join (pid[i], NULL);
     
+    gettimeofday(&ed, NULL);
     
-    report_all((*untest->root)->a);
+    printf("time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
+    
+    //report_all((*untest->root)->a);
     
     for(i = 0; i < allkey; i++){
         if(!searchNode_lo(untest, bulk[i])){
@@ -422,5 +422,58 @@ void test(int initial, int updaterate, int num_thread, int v){
     fprintf(stderr, "Error searching :%d!\n",count);
     
 }
+
+#define RANDOM 0
+
+void testseq(struct global* universe){
+    
+    int i, count = 0, seed;
+    struct timeval st,ed;
+    int values[MAXITER];
+    
+    seed = time(NULL);
+    srand(seed);
+    
+    for(i = 0; i < MAXITER; i++){
+        if(RANDOM)
+            values[i] = (rand()%MAXITER)+1;
+        else
+            values[i] = i+1;
+    }
+    
+    printf("Inserting %d (%s) elements...\n", MAXITER, (RANDOM?"Random":"Increasing"));
+    
+    gettimeofday(&st, NULL);
+    
+    for(i = 0; i < MAXITER; i++){
+        printf("%d\n", values[i]);
+        insert_par(universe,  values[i]);
+    }
+    
+    gettimeofday(&ed, NULL);
+    
+    printf("insert time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
+    
+    //report_all((*universe->root)->a);
+    
+    srand(seed);
+    
+    gettimeofday(&st, NULL);
+    
+    for(i = 0; i < MAXITER; i++){
+        if(!searchNode_lo(universe, values[i])){
+            count++;
+        }
+    }
+    
+    gettimeofday(&ed, NULL);
+    printf("search time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
+    
+    fprintf(stderr, "Error searching :%d!\n",count);
+    
+    printStat(universe);
+    exit(0);
+}
+
 
 #endif

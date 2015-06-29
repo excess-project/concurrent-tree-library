@@ -13,7 +13,7 @@
  distributed under the License is distributed on an "AS IS" BASIS,
  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  See the License for the specific language governing permissions and
- limitations under the License.
+ limitations under the License. 
  
  ---
  
@@ -21,12 +21,11 @@
  G. S. Brodal, R. Fagerberg, and R. Jacob, “Cache oblivious search trees via binary trees of small height,”
  in Proceedings of the thirteenth annual ACM-SIAM symposium on Discrete algorithms, ser. SODA ’02, 2002, pp. 39–48.
  
- */
+*/
 
 #define _GNU_SOURCE
-#include <sched.h>
-#include <unistd.h>
-
+#include<sched.h>
+#include<unistd.h>
 #include<stdio.h>
 #include<stdlib.h>
 #include<getopt.h>
@@ -45,22 +44,25 @@
 #include<fcntl.h>
 #include<sys/mman.h>
 
-#include <inttypes.h>
 #include<pthread.h>
 
 #include "common.h"
 #include "locks.h"
 #include "bench.h"
 
+//int duplicates = 0;
+unsigned entering_top=0;
+unsigned waiting_top=0;
+
+
+
 int main(int argc, char **argv ) {
+    int ii;
     char myopt = 0;
     struct global *universe = 0;
     
     float  d;
     int s, u, n, i, t, r, v;       //Various parameters
-    
-    
-    //myname = argv[0];
     
     i = 127;           //default initial element count
     t = 1023;            //default triangle size
@@ -117,6 +119,7 @@ int main(int argc, char **argv ) {
 	else
 		srand(s);
     
+    
     /* Allocate the universe */
     universe = malloc(sizeof(struct global));
     
@@ -127,33 +130,45 @@ int main(int argc, char **argv ) {
     universe->count_del = 0;
     universe->rebalance_done_ins = 0;
     universe->rebalance_done_del = 0;
-    universe->nodecnt = 0;                                          // Initial node count
-    universe->maxcnt = 0;                                           // Initial MAXnode count
+    universe->nodecnt = 0;                              // Initial node count
+    universe->maxcnt = 0;                               // Initial MAXnode count
+    universe->density = d;                              // Initial density
     
-    universe->nb_thread = n;                                        // Number of threads
+    universe->nb_thread = n;                            // Number of threads
     
-    universe->max_depth =  ceil(log(t)/log(2));                     // Maximum tree depth based on the cache line (triangle size)
-    universe->max_node  =  (1 << universe->max_depth)-1;            // Maximum node for the tree
+    universe->max_depth =  ceil(log(t)/log(2));         // Maximum tree depth based on the cache line (triangle size)
+    universe->max_node  =  (1 << universe->max_depth)-1;// Maximum node for the tree
     
-    universe->split_thres = universe->max_node >> 2;
-    
+    universe->iratio = malloc(universe->max_depth * sizeof(float));         //Pre-Compute per-level ratio based on density
+    for(ii=0;ii<universe->max_depth;ii++){
+        universe->iratio[ii] = universe->density + ii * ((1 - universe->density) / (universe->max_depth - 1));
+        DEBUG_PRINT("level %d ratio: %f\n" , ii, universe->iratio[ii]);
+    }
     
     init_global(universe);
     
     fprintf(stderr,"Finished building initial DeltaTree\n");
     fprintf(stderr, "The node size is: %ld bytes\n", sizeof(struct node));
     
-    create_map(universe->ref, universe->max_node); //Now lets make the map
-    
     if(i){
         fprintf(stderr,"Now pre-filling %d random elements...\n", i);
-        initial_add(universe, i, r);
+        initial_add_balanced(universe, i, r, 0);
+        fprintf(stderr,"...Done!\n\n");
+
     }
-    
     fprintf(stderr, "Finished init a DeltaTree using DeltaNode size %d, with initial %d members\n", universe->max_node, i);
-    fflush(stderr);
+    
     
     start_benchmark(universe, r, u, n, v);
-    exit(0);
+    
+    //for(ii=0;ii<MAXITER;ii++){
+    //    insertNode(universe, ii+1);
+    //}
+    
+    
+    fprintf(stderr, "Entering top: %d, Waiting at the top:%d\n", entering_top, waiting_top);
+    
+    free(universe);
+    return 0;
 }
 

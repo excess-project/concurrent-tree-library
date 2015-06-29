@@ -144,7 +144,9 @@ struct nodestack{
     struct node *items[1024];
 };
 
-
+#ifdef __cplusplus 
+extern "C" {
+#endif
 
 /* Array Operations */
 void print_int_array(const int *array, size_t len);
@@ -176,6 +178,8 @@ void initial_add (struct global *universe, int num, int range);
 void nop(void *null);
 int rand_range_re(unsigned int *seed, long r);
 
-
+#ifdef __cplusplus
+}
+#endif
 
 #endif
