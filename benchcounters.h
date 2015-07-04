@@ -47,15 +47,16 @@ void pcm_bench_end()
 
 void pcm_bench_print()
 {
+	std::cout << "\n#S:";
 	for(uint32 socket=0;socket<m->getNumSockets();++socket){
-	    std::cout << "\nS:"<<socket
+	    std::cout <<socket
               << ","<< getConsumedJoules(sktstate1[socket],sktstate2[socket])
               << ","<< getDRAMConsumedJoules(sktstate1[socket],sktstate2[socket])
 	      << ","<< getBytesReadFromMC(sktstate1[socket], sktstate2[socket]) / double(1024ULL * 1024ULL * 1024ULL)
-              << ","<< getBytesWrittenToMC(sktstate1[socket], sktstate2[socket]) / double(1024ULL * 1024ULL * 1024ULL)
-              << "\n";
+              << ","<< getBytesWrittenToMC(sktstate1[socket], sktstate2[socket]) / double(1024ULL * 1024ULL * 1024ULL);
+	   if(socket+1 < m->getNumSockets()) std::cout << ",";
 	}
-	std::cout << "T:" << TimeBefore << "," << TimeAfter << "\n";
+	std::cout << "\nT:" << TimeBefore << "," << TimeAfter << "\n";
 	m->cleanup();
 	m->resetPMU();
 }

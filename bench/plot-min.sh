@@ -3,8 +3,7 @@
 PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "avltree" "sftree" "NBBST")
 PROG_NAME=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "avltree" "sftree" "NBBST")
 
-
-INITS=($1)
+INITS=$1
 
 MAX_THREAD=24
 
@@ -17,11 +16,11 @@ MAX_THREAD=24
 #
 
 UPD_RATES=(20 50)
-START=(24 48)
-END=(47 71)
+START=(5 10)
+END=(9 14)
 
 SEARCH_START=0
-SEARCH_END=23
+SEARCH_END=4
 
 AVG=0
 SD=0
@@ -34,8 +33,10 @@ str=""
 for init in "${INITS[@]}"
 do
 
-AVG=56
-SD=57
+AVG=12
+SD=13
+
+echo $init
 
 j=0
 

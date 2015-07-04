@@ -3,11 +3,9 @@
 contains() { for e in "${@:2}"; do [[ "$e" = "$1" ]] && return 1; done; return 0; }
 isnumber() { test "$1" && printf '%f' "$1" >/dev/null 2>&1; }
 
-list="$(find ./$1 -name '*.err')"
+list="$(find ./$1 -name *$2*.err)"
 
 mkdir ./combined
-
-rm ./combined/*
 
 avail_files=()
 avail_inits=()
@@ -107,18 +105,18 @@ do
 
 			numbers=$(echo "$numbers" | sed 's/ *$//')
 
-			echo "$numbers"
+			#echo "$numbers"
 
 			stdev=$(
     				echo "$numbers" |
         			awk '{s+=$1; sumsq+=$1*$1}END{print sqrt(sumsq/NR - (s/NR)**2)}'
 			)
-			echo $stdev
+			#echo $stdev
 			sum=$(echo "$sum/$max_iter" | bc -l)
 			
 			aggr+="$sum, $stdev"
 		done
-		echo MAX_ITER : $max_iter
+		#echo MAX_ITER : $max_iter
 		echo $str$aggr >> ./combined/$tree-$init.csv
 
 	done

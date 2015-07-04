@@ -40,7 +40,7 @@
 /* Note: stdio is thread-safe */
 #endif
 
-#define DEFAULT_DURATION                10000
+#define DEFAULT_DURATION                1000
 #define DEFAULT_INITIAL                 256
 #define DEFAULT_NB_THREADS              1
 #define DEFAULT_RANGE                   0xFFFF

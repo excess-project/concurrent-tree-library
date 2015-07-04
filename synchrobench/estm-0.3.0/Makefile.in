@@ -9,7 +9,7 @@ SOLARIS_CC ?= SET_PATH_TO_SOLARIS_CC
 ifeq ($(VERSION),DEBUG)
      CFLAGS 	+= -g -DDEBUG -O0
 else
-     CFLAGS 	+= -g -O3 -DNDEBUG
+     CFLAGS 	+= -g -O2 -DNDEBUG
 endif
 
 ROOT ?= .
