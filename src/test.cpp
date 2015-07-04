@@ -16,8 +16,7 @@
 
 #ifdef __USEPCM
 
-#include "../intelpcm/cpucounters.h"
-using namespace std;
+#include "../../benchcounters.h"
 
 #endif
 
@@ -368,9 +367,9 @@ void test(){
 
     //TEST(skiplist::SkipList, "SkipList")
     TEST(nbbst::NBBST, "Non-Blocking Binary Search Tree")
-    TEST(avltree::AVLTree, "Optimistic AVL Tree")
-    TEST(lfmst::MultiwaySearchTree, "Lock Free Multiway Search Tree");
-    TEST(cbtree::CBTree, "Counter Based Tree");
+    //TEST(avltree::AVLTree, "Optimistic AVL Tree")
+    //TEST(lfmst::MultiwaySearchTree, "Lock Free Multiway Search Tree");
+    //TEST(cbtree::CBTree, "Counter Based Tree");
 }
 
 #define MAXITER     5000000
@@ -580,11 +579,7 @@ int benchmark(unsigned int threads, int size, float ins, float del, int initial)
     
 #ifdef __USEPCM
     
-    PCM * m = PCM::getInstance();
-    
-    if (m->program() != PCM::Success) return 0;
-    
-    SystemCounterState before_sstate = getSystemCounterState();
+pcm_bench_start();
     
 #endif
     
@@ -597,13 +592,8 @@ int benchmark(unsigned int threads, int size, float ins, float del, int initial)
 
 #ifdef __USEPCM
     
-    SystemCounterState after_sstate = getSystemCounterState();
-    
-    cout << "Instructions per clock: " << getIPC(before_sstate,after_sstate) << endl
-    << "L3 cache hit ratio: " << getL3CacheHitRatio(before_sstate,after_sstate) << endl
-    << "Bytes read: " << getBytesReadFromMC(before_sstate,after_sstate) << endl
-    << "Power used: " << getConsumedJoules(before_sstate,after_sstate) <<" joules"<< endl
-    << std::endl;
+pcm_bench_end();
+pcm_bench_print();
     
 #endif
 
@@ -668,6 +658,10 @@ void start_benchmark(int initial, int key_size, int updaterate, int num_thread, 
             case 18: benchmark<nbbst::NBBST<int, 18>, 18>(18, key_size, update, update, initial); break;
             case 19: benchmark<nbbst::NBBST<int, 19>, 19>(19, key_size, update, update, initial); break;
             case 20: benchmark<nbbst::NBBST<int, 20>, 20>(20, key_size, update, update, initial); break;
+            case 21: benchmark<nbbst::NBBST<int, 21>, 21>(21, key_size, update, update, initial); break;
+            case 22: benchmark<nbbst::NBBST<int, 22>, 22>(22, key_size, update, update, initial); break;
+            case 23: benchmark<nbbst::NBBST<int, 23>, 23>(23, key_size, update, update, initial); break;
+            case 24: benchmark<nbbst::NBBST<int, 24>, 24>(24, key_size, update, update, initial); break;
             default: break;
         }
     }else if(treetype == 1){
