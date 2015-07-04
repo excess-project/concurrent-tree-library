@@ -30,7 +30,7 @@
 
 #ifdef __USEPCM
 
-#include "../../benchcounters.h"
+#include "../../../../benchcounters.h"
 
 #endif
 

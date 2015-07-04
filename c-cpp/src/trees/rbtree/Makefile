@@ -1,6 +1,6 @@
 ROOT = ../../..
 
-PCMS	:= ../../../intelpcm/cpucounters.o ../../../intelpcm/msr.o ../../../intelpcm/pci.o ../../../intelpcm/client_bw.o
+PCMS	:= ../../../../../intelpcm/cpucounters.o ../../../../../intelpcm/msr.o ../../../../../intelpcm/pci.o ../../../../../intelpcm/client_bw.o
 
 include $(ROOT)/common/Makefile.common
 
@@ -14,7 +14,7 @@ endif
 
 .PHONY:	all clean
 
-all:	main 
+all:	main
 
 rbtree.o: interface.h
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/rbtree.o rbtree.c
@@ -26,8 +26,8 @@ intset.o: rbtree.h
 test.o: rbtree.o intset.h
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test.o test.c
 	$(CXX) $(CFLAGS) -D__USEPCM -c -o $(BUILDIR)/test.pcm.o test.c
-		
-main: intset.o test.o $(TMILB) $(PCMS)
+
+main: intset.o test.o $(PCMS)
 	$(CC) $(CFLAGS) $(BUILDIR)/intset.o $(BUILDIR)/test.o -o $(BINS) $(LDFLAGS)
 	$(CXX) $(CFLAGS) -D__USEPCM $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).pcm" $(LDFLAGS)
 

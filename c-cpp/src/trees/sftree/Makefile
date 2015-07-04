@@ -2,6 +2,8 @@ ROOT = ../../..
 
 include $(ROOT)/common/Makefile.common
 
+PCMS	:= ../../../../../intelpcm/cpucounters.o ../../../../../intelpcm/msr.o ../../../../../intelpcm/pci.o ../../../../../intelpcm/client_bw.o
+
 #atomic loads instead of unit loads (comment out for unit loads)
 #CFLAGS += -DATOMIC_LOADS
 #read/write set size tracking
@@ -16,11 +18,11 @@ CFLAGS += -DTFAVLSEQ
 CFLAGS += -DNO_MAINTENANCE
 CFLAGS += -DMICROBENCH
 
-BINS = $(BINDIR)/$(STM)-specfriendly-tree 
+BINS = $(BINDIR)/$(STM)-specfriendly-tree
 #$(BINDIR)/lf-st-move $(BINDIR)/lf-st-nest
 
 ifeq ($(STM),SEQUENTIAL)
-  BINS = $(BINDIR)/sequential-specfriendly-tree 
+  BINS = $(BINDIR)/sequential-specfriendly-tree
 else
   #sequential TFAVL (comment out for normal sequential AVL)
   CFLAGS += -DTFAVLSEQ
@@ -35,26 +37,30 @@ all:	main #main_nest
 
 sftree.o:
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/sftree.o sftree.c
+	$(CXX) $(CFLAGS) -c -o $(BUILDIR)/sftree.pcm.o sftree.c
 
 intset.o: sftree.h
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/intset.o intset.c
+	$(CXX) $(CFLAGS) -c -o $(BUILDIR)/intset.pcm.o intset.c
 
 test.o: sftree.h intset.h
 	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test.o test.c
+	$(CXX) $(CFLAGS) -D__USEPCM -c -o $(BUILDIR)/test.pcm.o test.c
 
-main: sftree.o intset.o test.o 
+main: sftree.o intset.o test.o $(PCMS)
 	$(CC) $(CFLAGS) $(BUILDIR)/sftree.o $(BUILDIR)/intset.o $(BUILDIR)/test.o -o $(BINS) $(LDFLAGS)
+	$(CXX) $(CFLAGS) -D__USEPCM $(BUILDIR)/sftree.pcm.o $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).pcm" $(LDFLAGS)
 
 #test_move.o: sftree.h intset.h
 #	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test_move.o test_move.c
 
-#main_move: sftree.o intset.o test_move.o 
+#main_move: sftree.o intset.o test_move.o
 #	$(CC) $(CFLAGS) $(BUILDIR)/sftree.o $(BUILDIR)/intset.o $(BUILDIR)/test_move.o -o $(BINDIR)/lf-st-move $(LDFLAGS)
 
 #test_nested.o: sftree.h intset.h
 #	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test_nested.o test_nested.c
 
-#main_nest: sftree.o intset.o test_nested.o 
+#main_nest: sftree.o intset.o test_nested.o
 #	$(CC) $(CFLAGS) $(BUILDIR)/sftree.o $(BUILDIR)/intset.o $(BUILDIR)/test_nested.o -o $(BINDIR)/lf-st-nest $(LDFLAGS)
 
 
