@@ -550,9 +550,9 @@ int main(int argc, char **argv)
 		{"help",                      no_argument,       NULL, 'h'},
 		{"duration",                  required_argument, NULL, 'd'},
 		{"initial-size",              required_argument, NULL, 'i'},
-		{"thread-num",                required_argument, NULL, 't'},
+		{"thread-num",                required_argument, NULL, 'n'},
 		{"range",                     required_argument, NULL, 'r'},
-		{"seed",                      required_argument, NULL, 'S'},
+		{"seed",                      required_argument, NULL, 's'},
 		{"update-rate",               required_argument, NULL, 'u'},
 		{"elasticity",                required_argument, NULL, 'x'},
 		{NULL, 0, NULL, 0}
@@ -587,7 +587,7 @@ int main(int argc, char **argv)
 	
 	while(1) {
 		i = 0;
-		c = getopt_long(argc, argv, "hAf:d:i:t:r:S:u:x:"
+		c = getopt_long(argc, argv, "hAf:d:i:n:r:s:u:x:"
 										, long_options, &i);
 		
 		if(c == -1)
@@ -617,11 +617,11 @@ int main(int argc, char **argv)
 								 "        Test duration in milliseconds (0=infinite, default=" XSTR(DEFAULT_DURATION) ")\n"
 								 "  -i, --initial-size <int>\n"
 								 "        Number of elements to insert before test (default=" XSTR(DEFAULT_INITIAL) ")\n"
-								 "  -t, --thread-num <int>\n"
+								 "  -n, --thread-num <int>\n"
 								 "        Number of threads (default=" XSTR(DEFAULT_NB_THREADS) ")\n"
 								 "  -r, --range <int>\n"
 								 "        Range of integer values inserted in set (default=" XSTR(DEFAULT_RANGE) ")\n"
-								 "  -S, --seed <int>\n"
+								 "  -s, --seed <int>\n"
 								 "        RNG seed (0=time-based, default=" XSTR(DEFAULT_SEED) ")\n"
 								 "  -u, --update-rate <int>\n"
 								 "        Percentage of update transactions (default=" XSTR(DEFAULT_UPDATE) ")\n"
@@ -646,13 +646,13 @@ int main(int argc, char **argv)
 				case 'i':
 					initial = atoi(optarg);
 					break;
-				case 't':
+				case 'n':
 					nb_threads = atoi(optarg);
 					break;
 				case 'r':
 					range = atol(optarg);
 					break;
-				case 'S':
+				case 's':
 					seed = atoi(optarg);
 					break;
 				case 'u':

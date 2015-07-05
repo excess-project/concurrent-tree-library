@@ -9,7 +9,7 @@
  * Copyright (c) 2009-2010.
  *
  * test.c is part of Synchrobench
- * 
+ *
  * Synchrobench is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation, version 2
@@ -21,22 +21,34 @@
  * GNU General Public License for more details.
  */
 
-#include <assert.h>                                                                                                                                                     
-#include <getopt.h>                                                                                                                                                     
-#include <limits.h>                                                                                                                                                     
-#include <pthread.h>                                                                                                                                                    
-#include <signal.h>                                                                                                                                                     
-#include <stdlib.h>                                                                                                                                                     
-#include <stdio.h>                                                                                                                                                      
-#include <sys/time.h>                                                                                                                                                   
-#include <time.h>   
+#define _GNU_SOURCE
+#include <sched.h>
+#include <math.h>
+
+#include <assert.h>
+#include <getopt.h>
+#include <limits.h>
+#include <pthread.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <sys/time.h>
+#include <time.h>
 #include <stdint.h>
 #include <atomic_ops.h>
 
+#include "urcu.h"
 #include "citrus.h"
 #include "tm.h"
 
-#define DEFAULT_DURATION                10000
+
+#ifdef __USEPCM
+
+#include "../../../../benchcounters.h"
+
+#endif
+
+#define DEFAULT_DURATION                1000
 #define DEFAULT_INITIAL                 256
 #define DEFAULT_NB_THREADS              1
 #define DEFAULT_RANGE                   0x7FFFFFFF
@@ -52,7 +64,7 @@
 #define ATOMIC_CAS_MB(a, e, v)          (AO_compare_and_swap_full((volatile AO_t *)(a), (AO_t)(e), (AO_t)(v)))
 #define ATOMIC_FETCH_AND_INC_FULL(a)    (AO_fetch_and_add1_full((volatile AO_t *)(a)))
 #define TRANSACTIONAL                   d->unit_tx
-                                                                                                                                                                        
+
 inline void *xmalloc(size_t size) {
   void *p = malloc(size);
   if (p == NULL) {
@@ -146,16 +158,53 @@ void barrier_cross(barrier_t *b)
 
 /* Re-entrant version of rand_range(r) */
 inline long rand_range_re(unsigned int *seed, long r) {
+/*
   int m = RAND_MAX;
   long d, v = 0;
-	
+
   do {
-    d = (m > r ? r : m);		
+    d = (m > r ? r : m);
     v += 1 + (long)(d * ((double)rand_r(seed)/((double)(m)+1.0)));
     r -= m;
   } while (r > 0);
   return v;
+*/
+  return (rand_r(seed) % r) + 1;
 }
+
+#define MAXITER 5000000
+
+/* simple function for generating random integer for probability, only works on value of integer 1-100% */
+
+#define MAX_POOL 1000
+
+int p_pool[MAX_POOL];
+
+void prepare_randintp(float ins, float del) {
+
+        int i,j=0;
+
+        //Put insert
+        for(i = 0;i < ins * MAX_POOL/100; i++){
+                p_pool[j++]=1;
+            }
+        //Put delete
+        for(i = 0; i< del* MAX_POOL/100; i++){
+                p_pool[j++]=2;
+            }
+        //Put search
+        for(i = j; i < MAX_POOL; i++){
+                p_pool[j++]=3;
+            }
+        /*
+               fprintf(stderr,"\n");
+
+               for (i = 0; i < MAX_POOL; i++)
+               fprintf(stderr, "%d, ", p_pool[i]);
+               fprintf(stderr,"\n");
+               */
+}
+
 
 typedef struct thread_data {
   val_t first;
@@ -179,6 +228,11 @@ typedef struct thread_data {
   unsigned long nb_aborts_invalid_memory;
   unsigned long max_retries;
   unsigned int seed;
+  unsigned int seed2;
+  unsigned long nb_time;
+  unsigned long nb_maxiter;
+  unsigned tid;
+
   node_t *set;
   //sl_intset_t *set;
   barrier_t *barrier;
@@ -186,75 +240,111 @@ typedef struct thread_data {
 } thread_data_t;
 
 void *test3(void *data) {
-	
+
   thread_data_t *d = (thread_data_t *)data;
-	
+
   /* Wait on barrier */
   barrier_cross(d->barrier);
-	
+
   while (stop == 0) {;}
   return NULL;
 }
 
 
 void *test(void *data) {
-  val_t last = -1;
+  int last = -1;
   val_t val = 0;
-  int unext; 
+  int unext;
+  int ops;
+
+
+    long cont = 0;
+    struct timeval start, end;
+
 
   thread_data_t *d = (thread_data_t *)data;
   urcu_register(d->id);
 
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  CPU_SET(d->tid, &cpuset);
+
+    pthread_t current_thread = pthread_self();
+    if(!pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset))
+            printf("Pinned to core %d\n", d->tid);
+
   /* Wait on barrier */
   barrier_cross(d->barrier);
-	
+
+  gettimeofday(&start, NULL);
+
   /* Is the first op an update? */
   unext = (rand_range_re(&d->seed, 100) - 1 < d->update);
 
   //#ifdef ICC
-  while (stop == 0) {
+  while(cont < d->nb_maxiter){
     //#else
     //while (AO_load_full(&stop) == 0) {
     //#endif /* ICC */
-		
+  			cont++;
+              ops = p_pool[rand_range_re(&d->seed2, MAX_POOL) - 1];
+              //val = rand_range_re(&d->seed2, d->range);
+
+              switch (ops){
+                          case 1:
+                              unext = 1;
+                              last = -1;
+                              break;
+                          case 2:
+                              unext = 1;
+                              last = 0;
+                              break;
+                          case 3:
+                              unext = 0;
+                              break;
+                          default: exit(0); break;
+                  }
+
+
+
     if (unext) { // update
-			
+
       if (last < 0) { // add
-				
+
 	val = rand_range_re(&d->seed, d->range);
 	if (insert(d->set, val, val)) {
 	  d->nb_added++;
 	  last = val;
-	} 				
+	}
 	d->nb_add++;
-				
+
       } else { // remove
-				
+
 	if (d->alternate) { // alternate mode (default)
-					
-	  if (delete(d->set, last)) {
+
+	  if (Delete(d->set, last)) {
 	    d->nb_removed++;
 	  }
 	  last = -1;
-					
+
 	} else {
-					
-	  // Random computation only in non-alternated cases 
+
+	  // Random computation only in non-alternated cases
 	  val = rand_range_re(&d->seed, d->range);
-	  // Remove one random value 
-	  if (delete(d->set, val)) {
+	  // Remove one random value
+	  if (Delete(d->set, val)) {
 	    d->nb_removed++;
-	    // Repeat until successful, to avoid size variations 
+	    // Repeat until successful, to avoid size variations
 	    last = -1;
-	  } 
-					
+	  }
+
 	}
 	d->nb_remove++;
       }
-			
+
     } else { // read
-			
-			
+
+
       if (d->alternate) {
 	if (d->update == 0) {
 	  if (last < 0) {
@@ -273,32 +363,35 @@ void *test(void *data) {
 	  }
 	}
       }	else val = rand_range_re(&d->seed, d->range);
-			
+
       /*if (d->effective && last)
 	val = last;
-	else 
+	else
 	val = rand_range_re(&d->seed, d->range);*/
-			
-      if (contains(d->set, val)) 
+
+      if (contains(d->set, val))
 	d->nb_found++;
       d->nb_contains++;
-			
+
     }
-		
-    /* Is the next op an update? */
+
+    /* Is the next op an update?
     if (d->effective) { // a failed remove/add is a read-only tx
       unext = ((100 * (d->nb_added + d->nb_removed))
 	       < (d->update * (d->nb_add + d->nb_remove + d->nb_contains)));
     } else { // remove/add (even failed) is considered as an update
       unext = ((rand_range_re(&d->seed, 100) - 1) < d->update);
     }
-		
+	*/
     //#ifdef ICC
   }
   //#else
   //	}
   //#endif /* ICC */
-	
+        gettimeofday(&end, NULL);
+
+        d->nb_time =(end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
+
   return NULL;
 }
 
@@ -306,24 +399,24 @@ void *test2(void *data)
 {
   int val, newval, last = 0;
   thread_data_t *d = (thread_data_t *)data;
-	
+
 #ifdef TLS
   rng_seed = &d->seed;
 #else /* ! TLS */
   pthread_setspecific(rng_seed_key, &d->seed);
 #endif /* ! TLS */
-	
+
   /* Wait on barrier */
   barrier_cross(d->barrier);
-	
+
   last = -1;
-	
+
 #ifdef ICC
   while (stop == 0) {
 #else
     while (AO_load_full(&stop) == 0) {
 #endif /* ICC */
-			
+
       val = rand_range_re(&d->seed, 100) - 1;
       if (val < d->update) {
 	if (last < 0) {
@@ -337,16 +430,16 @@ void *test2(void *data)
 	} else {
 	  if (d->alternate) {
 	    /* Remove last value */
-	    if (delete(d->set, last)) {
+	    if (Delete(d->set, last)) {
 	      d->nb_removed++;
-	      last = -1; 
+	      last = -1;
 	    }
 	    d->nb_remove++;
 	  } else {
 	    /* Random computation only in non-alternated cases */
 	    newval = rand_range_re(&d->seed, d->range);
 	    /* Remove one random value */
-	    if (delete(d->set, newval)) {
+	    if (Delete(d->set, newval)) {
 	      d->nb_removed++;
 	      /* Repeat until successful, to avoid size variations */
 	      last = -1;
@@ -361,12 +454,12 @@ void *test2(void *data)
 	  d->nb_found++;
 	d->nb_contains++;
       }
-			
+
     }
-		
+
     return NULL;
   }
-	
+
   int main(int argc, char **argv)
   {
     struct option long_options[] = {
@@ -374,21 +467,21 @@ void *test2(void *data)
       {"help",                      no_argument,       NULL, 'h'},
       {"duration",                  required_argument, NULL, 'd'},
       {"initial-size",              required_argument, NULL, 'i'},
-      {"thread-num",                required_argument, NULL, 't'},
+      {"thread-num",                required_argument, NULL, 'n'},
       {"range",                     required_argument, NULL, 'r'},
-      {"seed",                      required_argument, NULL, 'S'},
+      {"seed",                      required_argument, NULL, 's'},
       {"update-rate",               required_argument, NULL, 'u'},
       {"unit-tx",                   required_argument, NULL, 'x'},
       {NULL, 0, NULL, 0}
     };
 
-    node_t *set;		
+    node_t *set;
     //sl_intset_t *set;
     int i, c, size;
-    val_t last = 0; 
+    val_t last = 0;
     val_t val = 0;
-    unsigned long reads, effreads, updates, effupds, aborts, aborts_locked_read, 
-      aborts_locked_write, aborts_validate_read, aborts_validate_write, 
+    unsigned long reads, effreads, updates, effupds, aborts, aborts_locked_read,
+      aborts_locked_write, aborts_validate_read, aborts_validate_write,
       aborts_validate_commit, aborts_invalid_memory, max_retries;
     thread_data_t *data;
     pthread_t *threads;
@@ -406,18 +499,18 @@ void *test2(void *data)
     int alternate = DEFAULT_ALTERNATE;
     int effective = DEFAULT_EFFECTIVE;
     sigset_t block_set;
-		
+
     while(1) {
       i = 0;
-      c = getopt_long(argc, argv, "hAf:d:i:t:r:S:u:x:"
+      c = getopt_long(argc, argv, "hAf:d:i:n:r:s:u:x:"
 		      , long_options, &i);
-			
+
       if(c == -1)
 	break;
-			
+
       if(c == 0 && long_options[i].flag == 0)
 	c = long_options[i].val;
-			
+
       switch(c) {
       case 0:
 	/* Flag is automatically set */
@@ -440,11 +533,11 @@ void *test2(void *data)
 	       "        Test duration in milliseconds (0=infinite, default=" XSTR(DEFAULT_DURATION) ")\n"
 	       "  -i, --initial-size <int>\n"
 	       "        Number of elements to insert before test (default=" XSTR(DEFAULT_INITIAL) ")\n"
-	       "  -t, --thread-num <int>\n"
+	       "  -n, --thread-num <int>\n"
 	       "        Number of threads (default=" XSTR(DEFAULT_NB_THREADS) ")\n"
 	       "  -r, --range <int>\n"
 	       "        Range of integer values inserted in set (default=" XSTR(DEFAULT_RANGE) ")\n"
-	       "  -S, --seed <int>\n"
+	       "  -s, --seed <int>\n"
 	       "        RNG seed (0=time-based, default=" XSTR(DEFAULT_SEED) ")\n"
 	       "  -u, --update-rate <int>\n"
 	       "        Percentage of update transactions (default=" XSTR(DEFAULT_UPDATE) ")\n"
@@ -471,13 +564,13 @@ void *test2(void *data)
       case 'i':
 	initial = atoi(optarg);
 	break;
-      case 't':
+      case 'n':
 	nb_threads = atoi(optarg);
 	break;
       case 'r':
 	range = atol(optarg);
 	break;
-      case 'S':
+      case 's':
 	seed = atoi(optarg);
 	break;
       case 'u':
@@ -493,13 +586,13 @@ void *test2(void *data)
 	exit(1);
       }
     }
-		
+
     assert(duration >= 0);
     assert(initial >= 0);
     assert(nb_threads > 0);
     assert(range > 0 && range >= initial);
     assert(update >= 0 && update <= 100);
-		
+
     printf("Set type     : skip list\n");
     printf("Duration     : %d\n", duration);
     printf("Initial size : %d\n", initial);
@@ -515,23 +608,23 @@ void *test2(void *data)
 	   (int)sizeof(long),
 	   (int)sizeof(void *),
 	   (int)sizeof(uintptr_t));
-		
+
     timeout.tv_sec = duration / 1000;
     timeout.tv_nsec = (duration % 1000) * 1000000;
-		
+
     data = (thread_data_t *)xmalloc(nb_threads * sizeof(thread_data_t));
     threads = (pthread_t *)xmalloc(nb_threads * sizeof(pthread_t));
-		
+
     if (seed == 0)
       srand((int)time(0));
     else
       srand(seed);
-		
+
     levelmax = floor_log_2((unsigned int) initial);
     initURCU(nb_threads); // initialize RCU with specific numthreads
     set = init(); // initialize the tree
     stop = 0;
-		
+
     global_seed = rand();
 #ifdef TLS
     rng_seed = &global_seed;
@@ -542,10 +635,10 @@ void *test2(void *data)
     }
     pthread_setspecific(rng_seed_key, &global_seed);
 #endif /* ! TLS */
-		
+
     /* Init STM */
     printf("Initializing STM\n");
-		
+
     /* Populate set */
     printf("Adding %d entries to set\n", initial);
     i = 0;
@@ -560,13 +653,17 @@ void *test2(void *data)
     //printf("Set size     : %d\n", size);
     printf("Set size (TENTATIVE) : %d\n", initial);
     printf("Level max    : %d\n", levelmax);
-		
+
+      //Prepare Pool
+      prepare_randintp((float)update/2, (float)update/2);
+
     /* Access set from all threads */
     barrier_init(&barrier, nb_threads + 1);
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
     for (i = 0; i < nb_threads; i++) {
       printf("Creating thread %d\n", i);
+        data[i].tid = i;
       data[i].first = last;
       data[i].range = range;
       data[i].update = update;
@@ -588,6 +685,9 @@ void *test2(void *data)
       data[i].nb_aborts_invalid_memory = 0;
       data[i].max_retries = 0;
       data[i].seed = rand();
+        data[i].seed2 = rand();
+        data[i].nb_time = 0;
+        data[i].nb_maxiter = ceil (MAXITER/nb_threads);
       data[i].set = set;
       data[i].barrier = &barrier;
       data[i].id = i;
@@ -597,10 +697,22 @@ void *test2(void *data)
       }
     }
     pthread_attr_destroy(&attr);
-		
+
+      struct timeval _ts;
+      gettimeofday(&_ts, NULL);
+      fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
+
+
     /* Start threads */
     barrier_cross(&barrier);
-		
+
+#ifdef __USEPCM
+
+      pcm_bench_start();
+
+#endif
+
+
     printf("STARTING...\n");
     gettimeofday(&start, NULL);
     if (duration > 0) {
@@ -609,16 +721,16 @@ void *test2(void *data)
       sigemptyset(&block_set);
       sigsuspend(&block_set);
     }
-		
+
 #ifdef ICC
     stop = 1;
-#else	
+#else
     AO_store_full(&stop, 1);
 #endif /* ICC */
-		
+
     gettimeofday(&end, NULL);
     printf("STOPPING...\n");
-		
+
     /* Wait for thread completion */
     for (i = 0; i < nb_threads; i++) {
       if (pthread_join(threads[i], NULL) != 0) {
@@ -626,8 +738,16 @@ void *test2(void *data)
 	exit(1);
       }
     }
-		
-    duration = (end.tv_sec * 1000 + end.tv_usec / 1000) - 
+
+#ifdef __USEPCM
+
+      pcm_bench_end();
+      pcm_bench_print();
+
+#endif
+
+
+    duration = (end.tv_sec * 1000 + end.tv_usec / 1000) -
       (start.tv_sec * 1000 + start.tv_usec / 1000);
     aborts = 0;
     aborts_locked_read = 0;
@@ -641,7 +761,32 @@ void *test2(void *data)
     updates = 0;
     effupds = 0;
     max_retries = 0;
-    for (i = 0; i < nb_threads; i++) {
+
+        long counter_ins = 0;
+                long counter_del = 0;
+                long counter_search = 0;
+                long counter_ins_s = 0;
+                long counter_del_s = 0;
+                long counter_search_s = 0;
+                long counter_time = 0;
+
+
+
+                for (i = 0; i < nb_threads; i++) {
+
+
+                        counter_ins += data[i].nb_add;
+                        counter_del += data[i].nb_remove;
+                        counter_search += data[i].nb_contains;
+                        counter_ins_s += data[i].nb_added;
+                        counter_del_s += data[i].nb_removed;
+                        counter_search_s += data[i].nb_found;
+                        if(data[i].nb_time > counter_time)
+                                counter_time = data[i].nb_time;
+
+
+
+
       printf("Thread %d\n", i);
       printf("  #add        : %lu\n", data[i].nb_add);
       printf("    #added    : %lu\n", data[i].nb_added);
@@ -665,61 +810,67 @@ void *test2(void *data)
       aborts_validate_commit += data[i].nb_aborts_validate_commit;
       aborts_invalid_memory += data[i].nb_aborts_invalid_memory;
       reads += data[i].nb_contains;
-      effreads += data[i].nb_contains + 
-	(data[i].nb_add - data[i].nb_added) + 
-	(data[i].nb_remove - data[i].nb_removed); 
+      effreads += data[i].nb_contains +
+	(data[i].nb_add - data[i].nb_added) +
+	(data[i].nb_remove - data[i].nb_removed);
       updates += (data[i].nb_add + data[i].nb_remove);
-      effupds += data[i].nb_removed + data[i].nb_added; 
+      effupds += data[i].nb_removed + data[i].nb_added;
       size += data[i].nb_added - data[i].nb_removed;
       if (max_retries < data[i].max_retries)
 	max_retries = data[i].max_retries;
     }
     //printf("Set size      : %d (expected: %d)\n", sl_set_size(set), size);
     printf("Duration      : %d (ms)\n", duration);
-    printf("#txs          : %lu (%f / s)\n", reads + updates, 
+    printf("#txs          : %lu (%f / s)\n", reads + updates,
 	   (reads + updates) * 1000.0 / duration);
-		
+
     printf("#read txs     : ");
     if (effective) {
       printf("%lu (%f / s)\n", effreads, effreads * 1000.0 / duration);
-      printf("  #contains   : %lu (%f / s)\n", reads, reads * 1000.0 / 
+      printf("  #contains   : %lu (%f / s)\n", reads, reads * 1000.0 /
 	     duration);
     } else printf("%lu (%f / s)\n", reads, reads * 1000.0 / duration);
-		
+
     printf("#eff. upd rate: %f \n", 100.0 * effupds / (effupds + effreads));
-		
+
     printf("#update txs   : ");
     if (effective) {
       printf("%lu (%f / s)\n", effupds, effupds * 1000.0 / duration);
-      printf("  #upd trials : %lu (%f / s)\n", updates, updates * 1000.0 / 
+      printf("  #upd trials : %lu (%f / s)\n", updates, updates * 1000.0 /
 	     duration);
     } else printf("%lu (%f / s)\n", updates, updates * 1000.0 / duration);
-		
-    printf("#aborts       : %lu (%f / s)\n", aborts, aborts * 1000.0 / 
+
+    printf("#aborts       : %lu (%f / s)\n", aborts, aborts * 1000.0 /
 	   duration);
-    printf("  #lock-r     : %lu (%f / s)\n", aborts_locked_read, 
+    printf("  #lock-r     : %lu (%f / s)\n", aborts_locked_read,
 	   aborts_locked_read * 1000.0 / duration);
-    printf("  #lock-w     : %lu (%f / s)\n", aborts_locked_write, 
+    printf("  #lock-w     : %lu (%f / s)\n", aborts_locked_write,
 	   aborts_locked_write * 1000.0 / duration);
-    printf("  #val-r      : %lu (%f / s)\n", aborts_validate_read, 
+    printf("  #val-r      : %lu (%f / s)\n", aborts_validate_read,
 	   aborts_validate_read * 1000.0 / duration);
-    printf("  #val-w      : %lu (%f / s)\n", aborts_validate_write, 
+    printf("  #val-w      : %lu (%f / s)\n", aborts_validate_write,
 	   aborts_validate_write * 1000.0 / duration);
-    printf("  #val-c      : %lu (%f / s)\n", aborts_validate_commit, 
+    printf("  #val-c      : %lu (%f / s)\n", aborts_validate_commit,
 	   aborts_validate_commit * 1000.0 / duration);
-    printf("  #inv-mem    : %lu (%f / s)\n", aborts_invalid_memory, 
+    printf("  #inv-mem    : %lu (%f / s)\n", aborts_invalid_memory,
 	   aborts_invalid_memory * 1000.0 / duration);
     printf("Max retries   : %lu\n", max_retries);
-		
+
+
+              fprintf(stderr, "\n0: %ld, %0.2f, %0.2f, %d,", range, (float)update/2, (float)update/2, nb_threads);
+              fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
+              fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, counter_time);
+
+
     /* Delete set */
     //sl_set_delete(set);
-		
+
 #ifndef TLS
     pthread_key_delete(rng_seed_key);
 #endif /* ! TLS */
-		
+
     free(threads);
     free(data);
-		
+
     return 0;
   }

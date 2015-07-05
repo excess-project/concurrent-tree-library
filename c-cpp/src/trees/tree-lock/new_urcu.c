@@ -5,49 +5,49 @@
 
 /**
  * Copyright 2014 Maya Arbel (mayaarl [at] cs [dot] technion [dot] ac [dot] il).
- * 
- * This file is part of Citrus. 
- * 
+ *
+ * This file is part of Citrus.
+ *
  * Citrus is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- * 
- * Authors Maya Arbel and Adam Morrison 
+ *
+ * Authors Maya Arbel and Adam Morrison
  */
 
-int threads; 
+int threads;
 rcu_node** urcu_table;
 
 void initURCU(int num_threads){
    rcu_node** result = (rcu_node**) malloc(sizeof(rcu_node)*num_threads);
    int i;
-   rcu_node* new;
-   threads = num_threads; 
+   rcu_node* New;
+   threads = num_threads;
    for( i=0; i<threads ; i++){
-        new = (rcu_node*) malloc(sizeof(rcu_node));
-        new->time = 1; 
-        *(result + i) = new;
+        New = (rcu_node*) malloc(sizeof(rcu_node));
+        New->time = 1;
+        *(result + i) = New;
     }
     urcu_table =  result;
     printf("initializing URCU finished, node_size: %zd\n", sizeof(rcu_node));
-    return; 
+    return;
 }
 
-__thread long* times = NULL; 
-__thread int i; 
+__thread long* times = NULL;
+__thread int i;
 
 void urcu_register(int id){
     times = (long*) malloc(sizeof(long)*threads);
-    i = id; 
+    i = id;
     if (times == NULL ){
         printf("malloc failed\n");
         exit(1);
@@ -72,7 +72,7 @@ void urcu_read_unlock(){
 }
 
 void urcu_synchronize(){
-    int i; 
+    int i;
     //read old counters
     for( i=0; i<threads ; i++){
         times[i] = urcu_table[i]->time;
@@ -82,8 +82,8 @@ void urcu_synchronize(){
         while(1){
             unsigned long t = urcu_table[i]->time;
             if (t & 1 || t > times[i]){
-                break; 
+                break;
             }
         }
     }
-} 
+}

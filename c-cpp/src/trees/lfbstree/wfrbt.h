@@ -65,6 +65,10 @@ typedef struct thread_data {
   unsigned long nb_found;
   unsigned long ops;
   unsigned int seed;
+  unsigned int seed2;
+  unsigned long nb_time;
+  unsigned long nb_maxiter;
+  unsigned tid;
   double search_frac;
   double insert_frac;
   double delete_frac;

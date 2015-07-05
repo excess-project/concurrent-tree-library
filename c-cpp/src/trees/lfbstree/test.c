@@ -26,8 +26,18 @@
 #include <signal.h>
 #include <sys/time.h>
 
+#define _GNU_SOURCE
+#include <sched.h>
+#include <math.h>
+
 #include "wfrbt.h"
 #include "operations.h"
+
+#ifdef __USEPCM
+
+#include "../../../../benchcounters.h"
+
+#endif
 
 #define DEFAULT_DURATION                1000
 #define DEFAULT_INITIAL                 256
@@ -101,7 +111,7 @@ inline long rand_range(long r) {
 /* 	  return last++; */
 /* 	} */
 /* #endif */
-	
+
 	do {
 		d = (m > r ? r : m);		
 		v += 1 + (int)(d * ((double)rand()/((double)(m)+1.0)));
@@ -112,8 +122,8 @@ inline long rand_range(long r) {
 
 /* Re-entrant version of rand_range(r) */
 inline long rand_range_re(unsigned int *seed, long r) {
-	int m = RAND_MAX;
-	int d, v = 0;
+/*	int m = RAND_MAX;
+	int d, v = 0;*/
 
 /* #ifdef BIAS_RANGE */
 /* 	if(rand_r(seed) < RAND_MAX / 10000) { */
@@ -123,14 +133,48 @@ inline long rand_range_re(unsigned int *seed, long r) {
 /* 	  return last++; */
 /* 	} */
 /* #endif	 */
+/*
 	do {
 		d = (m > r ? r : m);		
 		v += 1 + (int)(d * ((double)rand_r(seed)/((double)(m)+1.0)));
 		r -= m;
 	} while (r > 0);
-	return v;
+	return v;*/
+    return (rand_r(seed) % r) + 1;
 }
 
+#define MAXITER 5000000
+
+/* simple function for generating random integer for probability, only works on value of integer 1-100% */
+
+#define MAX_POOL 1000
+
+int p_pool[MAX_POOL];
+
+void prepare_randintp(float ins, float del) {
+    
+        int i,j=0;
+    
+        //Put insert
+        for(i = 0;i < ins * MAX_POOL/100; i++){
+                p_pool[j++]=1;
+            }
+        //Put delete
+        for(i = 0; i< del* MAX_POOL/100; i++){
+                p_pool[j++]=2;
+            }
+        //Put search
+        for(i = j; i < MAX_POOL; i++){
+                p_pool[j++]=3;
+            }
+        /*
+               fprintf(stderr,"\n");
+         
+               for (i = 0; i < MAX_POOL; i++)
+               fprintf(stderr, "%d, ", p_pool[i]);
+               fprintf(stderr,"\n");
+               */
+}
 
 void *test3(void *data) {
 	
@@ -144,103 +188,142 @@ void *test3(void *data) {
 }
 
 void *test(void *data) {
-  val_t last = -1;
+  int last = -1;
   val_t val = 0;
+  int ops;
   int unext; 
-
+  
+  long cont = 0;
+  struct timeval start, end;
+    
   thread_data_t *d = (thread_data_t *)data;
+    
+  cpu_set_t cpuset;
+  CPU_ZERO(&cpuset);
+  CPU_SET(d->tid, &cpuset);
+  
+  pthread_t current_thread = pthread_self();
+  if(!pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset))
+      printf("Pinned to core %d\n", d->tid);
+    
 
   /* Wait on barrier */
   barrier_cross(d->barrier);
-	
+
+  gettimeofday(&start, NULL);
+    
   /* Is the first op an update? */
   unext = (rand_range_re(&d->seed, 100) - 1 < d->update);
-
+    
   //#ifdef ICC
-  while (stop == 0) {
-    //#else
-    //while (AO_load_full(&stop) == 0) {
-    //#endif /* ICC */
-		
-    if (unext) { // update
-			
-      if (last < 0) { // add
-				
-	val = rand_range_re(&d->seed, d->range);
-	assert(val > 0);
-	if (insert(d,val)) {
-	  last = val;
-	} 				
-	d->nb_add++;
-				
-      } else { // remove
-				
-	if (d->alternate) { // alternate mode (default)
-					
-	  delete_node(d, last);
-	  
-	  last = -1;
-					
-	} else {
-					
-	  // Random computation only in non-alternated cases 
-	  val = rand_range_re(&d->seed, d->range);
-	  // Remove one random value 
-	  if (delete_node(d, val)) {
-	    // Repeat until successful, to avoid size variations 
-	    last = -1;
-	  } 
-					
-	}
-	d->nb_remove++;
-      }
-			
-    } else { // read
-			
-			
-      if (d->alternate) {
-	if (d->update == 0) {
-	  if (last < 0) {
-	    val = d->first;
-	    last = val;
-	  } else { // last >= 0
-	    val = rand_range_re(&d->seed, d->range);
-	    last = -1;
-	  }
-	} else { // update != 0
-	  if (last < 0) {
-	    val = rand_range_re(&d->seed, d->range);
-	    //last = val;
-	  } else {
-	    val = last;
-	  }
-	}
-      }	else val = rand_range_re(&d->seed, d->range);
-			
-      /*if (d->effective && last)
-	val = last;
-	else 
-	val = rand_range_re(&d->seed, d->range);*/
-			
-      if (search(d, val)) 
-	      d->nb_found++;
-      d->nb_contains++;
-			
+    while(cont < d->nb_maxiter){
+        //#else
+        //while (AO_load_full(&stop) == 0) {
+        //#endif /* ICC */
+        
+        cont++;
+        ops = p_pool[rand_range_re(&d->seed2, MAX_POOL) - 1];
+        //val = rand_range_re(&d->seed2, d->range);
+
+        switch (ops){
+            case 1:
+                unext = 1;
+                last = -1;
+                break;
+            case 2:
+                unext = 1;
+                last = 0;
+                break;
+            case 3:
+                unext = 0;
+                break;
+            default:
+                exit(0);
+                break;
+        }
+        
+  
+        if (unext) { // update
+  
+            if (last < 0) { // add
+                val = rand_range_re(&d->seed, d->range);
+                assert(val > 0);
+                if (insert(d,val)) {
+                    last = val;
+                }
+                d->nb_add++;
+                
+            } else { // remove
+                
+                if (d->alternate) { // alternate mode (default)
+                    
+                    delete_node(d, last);
+                    
+                    last = -1;
+                    
+                } else {
+                    
+                    // Random computation only in non-alternated cases
+                    val = rand_range_re(&d->seed, d->range);
+                    // Remove one random value
+                    if (delete_node(d, val)) {
+                        // Repeat until successful, to avoid size variations
+                        last = -1;
+                    }
+                    
+                }
+                d->nb_remove++;
+            }
+            
+        } else { // read
+            
+            
+            if (d->alternate) {
+                if (d->update == 0) {
+                    if (last < 0) {
+                        val = d->first;
+                        last = val;
+                    } else { // last >= 0
+                        val = rand_range_re(&d->seed, d->range);
+                        last = -1;
+                    }
+                } else { // update != 0
+                    if (last < 0) {
+                        val = rand_range_re(&d->seed, d->range);
+                        //last = val;
+                    } else {
+                        val = last;
+                    }
+                }
+            }	else val = rand_range_re(&d->seed, d->range);
+            
+            /*if (d->effective && last)
+             val = last;
+             else 
+             val = rand_range_re(&d->seed, d->range);*/
+            
+            if (search(d, val)) 
+                d->nb_found++;
+            d->nb_contains++;
+            
+        }
+        
+        /* Is the next op an update?
+         if (d->effective) { // a failed remove/add is a read-only tx
+         unext = ((100 * (d->nb_added + d->nb_removed))
+         < (d->update * (d->nb_add + d->nb_remove + d->nb_contains)));
+         } else { // remove/add (even failed) is considered as an update
+         unext = ((rand_range_re(&d->seed, 100) - 1) < d->update);
+         }
+         */
+        //#ifdef ICC
     }
-		
-    /* Is the next op an update? */
-    if (d->effective) { // a failed remove/add is a read-only tx
-      unext = ((100 * (d->nb_added + d->nb_removed))
-	       < (d->update * (d->nb_add + d->nb_remove + d->nb_contains)));
-    } else { // remove/add (even failed) is considered as an update
-      unext = ((rand_range_re(&d->seed, 100) - 1) < d->update);
-    }
-		
-    //#ifdef ICC
-  }
   //#else
   //	}
   //#endif /* ICC */
+    gettimeofday(&end, NULL);
+    d->nb_time =(end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
+    
 	
   return NULL;
 }
@@ -304,7 +387,7 @@ void *test2(void *data)
       }
 			
     }
-		
+	
     return NULL;
   }
 
@@ -317,9 +400,9 @@ void *test2(void *data)
       {"help",                      no_argument,       NULL, 'h'},
       {"duration",                  required_argument, NULL, 'd'},
       {"initial-size",              required_argument, NULL, 'i'},
-      {"thread-num",                required_argument, NULL, 't'},
+      {"thread-num",                required_argument, NULL, 'n'},
       {"range",                     required_argument, NULL, 'r'},
-      {"seed",                      required_argument, NULL, 'S'},
+      {"seed",                      required_argument, NULL, 's'},
       {"update-rate",               required_argument, NULL, 'u'},
       {"unit-tx",                   required_argument, NULL, 'x'},
       {NULL, 0, NULL, 0}
@@ -352,7 +435,7 @@ void *test2(void *data)
 		
     while(1) {
       i = 0;
-      c = getopt_long(argc, argv, "hAf:d:i:t:r:S:u:x:"
+      c = getopt_long(argc, argv, "hAf:d:i:n:r:s:u:x:"
 		      , long_options, &i);
 			
       if(c == -1)
@@ -382,11 +465,11 @@ void *test2(void *data)
 	       "        Test duration in milliseconds (0=infinite, default=" XSTR(DEFAULT_DURATION) ")\n"
 	       "  -i, --initial-size <int>\n"
 	       "        Number of elements to insert before test (default=" XSTR(DEFAULT_INITIAL) ")\n"
-	       "  -t, --thread-num <int>\n"
+	       "  -n, --thread-num <int>\n"
 	       "        Number of threads (default=" XSTR(DEFAULT_NB_THREADS) ")\n"
 	       "  -r, --range <int>\n"
 	       "        Range of integer values inserted in set (default=" XSTR(DEFAULT_RANGE) ")\n"
-	       "  -S, --seed <int>\n"
+	       "  -s, --seed <int>\n"
 	       "        RNG seed (0=time-based, default=" XSTR(DEFAULT_SEED) ")\n"
 	       "  -u, --update-rate <int>\n"
 	       "        Percentage of update transactions (default=" XSTR(DEFAULT_UPDATE) ")\n"
@@ -413,13 +496,13 @@ void *test2(void *data)
       case 'i':
 	initial = atoi(optarg);
 	break;
-      case 't':
+      case 'n':
 	nb_threads = atoi(optarg);
 	break;
       case 'r':
 	range = atol(optarg);
 	break;
-      case 'S':
+      case 's':
 	seed = atoi(optarg);
 	break;
       case 'u':
@@ -518,13 +601,17 @@ void *test2(void *data)
     //printf("Set size     : %d\n", size);
     printf("Set size (TENTATIVE) : %d\n", initial);
     printf("Level max    : %d\n", levelmax);
-		
+
+    //Prepare Pool
+    prepare_randintp((float)update/2, (float)update/2);
+
     /* Access set from all threads */
     barrier_init(&barrier, nb_threads + 1);
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
     for (i = 0; i < nb_threads; i++) {
       printf("Creating thread %d\n", i);
+      data[i].tid = i;
       data[i].first = last;
       data[i].range = range;
       data[i].update = update;
@@ -536,6 +623,11 @@ void *test2(void *data)
       data[i].nb_removed = 0;
       data[i].nb_contains = 0;
       data[i].nb_found = 0;
+      data[i].seed = rand();
+      data[i].seed2 = rand();
+      data[i].nb_time = 0;
+      data[i].nb_maxiter = ceil (MAXITER/nb_threads);
+      
       data[i].barrier = &barrier;
       data[i].rootOfTree = newRT;
       data[i].id = i;
@@ -549,9 +641,21 @@ void *test2(void *data)
     }
     pthread_attr_destroy(&attr);
 		
+    struct timeval _ts;
+    gettimeofday(&_ts, NULL);
+    fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
+    
+    
     /* Start threads */
     barrier_cross(&barrier);
-		
+	
+#ifdef __USEPCM
+
+      pcm_bench_start();
+
+#endif
+
+      
     printf("STARTING...\n");
     gettimeofday(&start, NULL);
     if (duration > 0) {
@@ -577,7 +681,15 @@ void *test2(void *data)
 	exit(1);
       }
     }
-		
+
+#ifdef __USEPCM
+
+      pcm_bench_end();
+      pcm_bench_print();
+
+#endif
+      
+      
     duration = (end.tv_sec * 1000 + end.tv_usec / 1000) - 
       (start.tv_sec * 1000 + start.tv_usec / 1000);
     reads = 0;
@@ -585,7 +697,28 @@ void *test2(void *data)
     updates = 0;
     effupds = 0;
     max_retries = 0;
-    for (i = 0; i < nb_threads; i++) {
+
+      long counter_ins = 0;
+      long counter_del = 0;
+      long counter_search = 0;
+      long counter_ins_s = 0;
+      long counter_del_s = 0;
+      long counter_search_s = 0;
+      long counter_time = 0;
+      
+      
+      for (i = 0; i < nb_threads; i++) {
+            counter_ins += data[i].nb_add;
+            counter_del += data[i].nb_remove;
+            counter_search += data[i].nb_contains;
+            counter_ins_s += data[i].nb_added;
+            counter_del_s += data[i].nb_removed;
+            counter_search_s += data[i].nb_found;
+            if(data[i].nb_time > counter_time)
+                counter_time = data[i].nb_time;
+            
+            
+            
       printf("Thread %d\n", i);
       printf("  #add        : %lu\n", data[i].nb_add);
       printf("    #added    : %lu\n", data[i].nb_added);
@@ -626,7 +759,13 @@ void *test2(void *data)
       printf("  #upd trials : %lu (%f / s)\n", updates, updates * 1000.0 / 
 	     duration);
     } else printf("%lu (%f / s)\n", updates, updates * 1000.0 / duration);
-		
+      
+      
+      fprintf(stderr, "\n0: %ld, %0.2f, %0.2f, %d,", range, (float)update/2, (float)update/2, nb_threads);
+      fprintf(stderr, " %ld, %ld, %ld,", counter_ins, counter_del, counter_search);
+      fprintf(stderr, " %ld, %ld, %ld, %ld\n", counter_ins_s, counter_del_s, counter_search_s, counter_time);
+      
+	
 		
     /* Delete set */
     //sl_set_delete(set);
