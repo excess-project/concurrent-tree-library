@@ -1,10 +1,10 @@
 #!/bin/sh
 
-PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "avltree" "sftree" "NBBST")
+PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "sftree" "citrus" "nata" "NBBST")
 
 INITS=('4194303')
 
-REPEAT=5
+REPEAT=1
 VGMODE=0
 
 echo "STARTING BENCHMARK"

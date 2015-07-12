@@ -1,6 +1,6 @@
 #!/bin/sh
 
-PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "avltree" "sftree" "NBBST")
+PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "sftree" "citrus" "nata" "NBBST")
 
 INITS=('65535')
 

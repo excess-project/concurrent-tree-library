@@ -1,0 +1,33 @@
+#!/bin/sh -f
+# name of the job
+#PBS -N SHORT_BENCHMARK
+#PBS -o $PBS_JOBID.out
+#PBS -e $PBS_JOBID.err
+# set walltime: max. 00:10:00 for the queue 'batch' and max. 01:00:00 for the queue 'night'
+#PBS -l walltime=00:10:00
+# set the queue: batch or night
+#PBS -q batch
+# set the number of nodes 
+#PBS -l nodes=1:ppn=20
+# use submission enviroment - please don't change
+#pbs -V
+#pbs -n 1
+#start job from the directory it was submitted
+cd $PBS_O_WORKDIR
+date
+echo PBS_O_HOST $PBS_O_HOST "The name of the host upon which the qsub command is running."
+echo PBS_O_WORKDIR $PBS_O_WORKDIR "The absolute path of the current working directory of the qsub command."
+echo PBS_JOBID $PBS_JOBID 	"The job identifier assigned to the job by the batch system."
+echo PBS_JOBNAME $PBS_JOBNAME 	"The job name supplied by the user."
+#load used modules
+module load  compiler/gnu/4.9.2
+
+pwd
+
+$PBS_O_WORKDIR/run-bench-small.sh
+
+echo "job is done"
+
+
+
+

@@ -5,7 +5,8 @@ isnumber() { test "$1" && printf '%f' "$1" >/dev/null 2>&1; }
 
 list="$(find ./$1 -name *$2*.err)"
 
-mkdir ./combined
+mkdir -p ./combined
+rm ./combined/*$2*
 
 avail_files=()
 avail_inits=()

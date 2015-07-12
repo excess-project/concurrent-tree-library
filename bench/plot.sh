@@ -1,7 +1,7 @@
 #!/bin/bash
 
-PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "avltree" "sftree" "NBBST")
-PROG_NAME=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "avltree" "sftree" "NBBST")
+PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "sftree" "citrus" "nata" "NBBST")
+PROG_NAME=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "sftree" "RCU" "Natarajan" "NBBST")
 
 
 INITS=($1)
@@ -101,7 +101,7 @@ do
     str=$str"set label 1 at graph 0.05, 0.85\n"
 
 
-	str=$str"set xlabel 'nr. of threads'\n
+	str=$str"set xlabel 'no. of threads'\n
 
 	set xrange [1:${MAX_THREAD}]\n\
 	set xtics nomirror\n"
@@ -136,8 +136,6 @@ unset title\n\
 unset object\n\
 
 set key box\n\
-set key width 6\n\
-set key height 3\n\
 set key spacing 1.1\n\
 set key right \n\
 

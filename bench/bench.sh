@@ -11,7 +11,7 @@ if [ $valgrind -eq 0 ]; then
 
 	for update_rate in 0 20 50
 	do
-		for i in {1..24}
+		for i in {1..20}
 		do
    			./$cmd -s $seed -i $initial -n $i -u $update_rate -r $range -f 0 $extra #-t 1023
 			sleep 1

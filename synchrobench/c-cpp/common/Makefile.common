@@ -19,7 +19,7 @@ SOLARIS_CC 	?= gcc
 ifeq ($(VERSION),DEBUG)
      CFLAGS     += -g -DDEBUG -O0
 else
-     CFLAGS     += -O3 -lm -DNDEBUG
+     CFLAGS     += -O2 -lm -DNDEBUG
 endif
 
 # Parallelism

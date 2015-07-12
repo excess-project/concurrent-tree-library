@@ -12,6 +12,10 @@ then
 	script_dir="$current_dir"
 fi
 
+module load compiler/gnu/4.9.2
+export CC=gcc
+export CXX=g++
+
 echo "Building Binaries..."
 echo $BASEDIR
 
@@ -27,26 +31,27 @@ done
 
 #Synchrobench
 
-cd ../synchrobench
-cd estm-0.3.0
-make clean
-make
-
-cd ..
+cd $script_dir/../synchrobench/c-cpp
 make clean
 make estm
-rm $script_dir/rbtree
-rm $script_dir/avltree
-rm $script_dir/sftree
+make spinlock
+make lockfree
 
-ln -s $(pwd)/bin/lf-rt $script_dir/rbtree
-ln -s $(pwd)/bin/lf-st $script_dir/avltree
-ln -s $(pwd)/bin/lf-st-nest $script_dir/sftree
+rm $script_dir/rbtree
+rm $script_dir/sftree
+rm $script_dir/nata
+rm $script_dir/citrus
+
+
+ln -s $(pwd)/bin/ESTM-rbtree $script_dir/rbtree
+ln -s $(pwd)/bin/ESTM-specfriendly-tree $script_dir/sftree
+ln -s $(pwd)/bin/lockfree-bst $script_dir/nata
+ln -s $(pwd)/bin/SPIN-RCU-tree $script_dir/citrus
 
 
 #NBBST
 
-cd ../NBBST
+cd $script_dir/../NBBST
 
 rm CMakeCache.txt       
 rm -R CMakeFiles/

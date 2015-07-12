@@ -1,7 +1,7 @@
 #!/bin/bash
 
-PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "avltree" "sftree" "NBBST")
-PROG_NAME=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "avltree" "sftree" "NBBST")
+PROGS=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "sftree" "citrus" "nata" "NBBST")
+PROG_NAME=("GBST" "DeltaTree" "hGBST" "CBTree" "rbtree" "sftree" "RCU" "Natarajan" "NBBST")
 
 INITS=$1
 
@@ -51,7 +51,7 @@ str=$str"set output \"perf-${init}.tex\"\n"
 str=$str"set multiplot layout 2,2\n"
 
 str=$str"unset xlabel\n\
-set ylabel \"operations/second\" \n"
+set ylabel \"operations/second\"\n"
 
 str=$str"set xlabel 'no. of threads'\n"
 
@@ -102,7 +102,7 @@ do
     str=$str"set label 1 at graph 0.05, 0.85\n"
 
 
-	str=$str"set xlabel 'nr. of threads'\n
+	str=$str"set xlabel 'no. of threads'\n
 
 	set xrange [1:${MAX_THREAD}]\n\
 	set xtics nomirror\n"
@@ -112,7 +112,7 @@ do
     for prg in "${PROGS[@]}"
     do
         if [ $i -ne "0" ]; then
-            str=$str", "
+            str=$str","
         fi
 
         str=$str"\"./combined/${prg}-${init}.csv\" every ::${START[$j]}::${END[$j]} using 4:((\$5+\$6+\$7)/(\$${AVG}/1000)) notitle  w lines ls $((i+1)),"
@@ -137,8 +137,6 @@ unset title\n\
 unset object\n\
 
 set key box\n\
-set key width 6\n\
-set key height 3\n\
 set key spacing 1.1\n\
 set key right \n\
 
