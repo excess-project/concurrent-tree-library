@@ -12,6 +12,9 @@ then
 	script_dir="$current_dir"
 fi
 
+# load module environment on cluster
+. $HOME./bashrc
+
 module load compiler/gnu/4.9.2
 export CC=gcc
 export CXX=g++
