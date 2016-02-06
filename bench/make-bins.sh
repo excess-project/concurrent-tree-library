@@ -13,7 +13,7 @@ then
 fi
 
 # load module environment on cluster
-. $HOME./bashrc
+. $HOME/.bashrc
 
 module load compiler/gnu/4.9.2
 export CC=gcc
