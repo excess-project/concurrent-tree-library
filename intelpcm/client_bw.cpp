@@ -15,14 +15,12 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 //
 
 #include <iostream>
-#include <sstream>
-#include <iomanip>
+#include <string.h>
+#ifndef _MSC_VER
 #include <sys/types.h>
+#endif
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <stdio.h>
-#include <assert.h>
-#include <string.h>
 #include "pci.h"
 #include "client_bw.h"
 
@@ -89,39 +87,35 @@ ClientBW::ClientBW() : pmem(new PCMPmem())
        throw std::exception();
     }
     startAddr = imcbar & (~(4096ULL-1ULL)); // round down to 4K
-
-    Mutex = CreateMutex(NULL,FALSE,NULL);
 }
 
 uint64 ClientBW::getImcReads()
 {
-    WaitForSingleObject(Mutex,INFINITE);
+    mutex.lock();
     uint32 res = pmem->read32(startAddr + PCM_CLIENT_IMC_DRAM_DATA_READS); 
-    ReleaseMutex(Mutex);
-    return res;
+    mutex.unlock();
+    return (uint64)res;
 }
 
 uint64 ClientBW::getImcWrites()
 {
-   WaitForSingleObject(Mutex,INFINITE);
+   mutex.lock();
    uint32 res = pmem->read32(startAddr + PCM_CLIENT_IMC_DRAM_DATA_WRITES);
-   ReleaseMutex(Mutex);
-   return res;
+   mutex.unlock();
+   return (uint64)res;
 }
 
 uint64 ClientBW::getIoRequests()
 {
-   WaitForSingleObject(Mutex,INFINITE);
+   mutex.lock();
    uint32 res = pmem->read32(startAddr + PCM_CLIENT_IMC_DRAM_IO_REQESTS);
-   ReleaseMutex(Mutex);
-   return res;
+   mutex.unlock();
+   return (uint64)res;
 }
 
 ClientBW::~ClientBW()
 {
     pmem->uninstall_driver();
-    delete pmem;
-    CloseHandle(Mutex);
 }
 
 

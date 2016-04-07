@@ -1,31 +1,35 @@
 #
-# Copyright (c) 2009-2014 Intel Corporation
+# Copyright (c) 2009-2015 Intel Corporation
 # written by Roman Dementiev and Jim Harris
 #
 
-EXE = pcm-numa.x pcm-power.x pcm.x pcm-sensor.x pcm-msr.x pcm-memory.x pcm-tsx.x pcm-pcie.x
+EXE = pcm-numa.x pcm-power.x pcm.x pcm-sensor.x pcm-msr.x pcm-memory.x pcm-tsx.x pcm-pcie.x pcm-core.x
 
 all: $(EXE)
 
-CXXFLAGS += -Wall -g -O3 
+klocwork: $(EXE)
 
-# uncomment if you want to rely on Linux perf support (user needs CAP_SYS_ADMIN privileges)
+CXXFLAGS += -Wall -g -O3 -Wno-unknown-pragmas
+
+# rely on Linux perf support (user needs CAP_SYS_ADMIN privileges), comment out to disable
 ifneq ($(wildcard /usr/include/linux/perf_event.h),)
-#CXXFLAGS += -DPCM_USE_PERF 
+CXXFLAGS += -DPCM_USE_PERF
 endif
 
 UNAME:=$(shell uname)
 
 ifeq ($(UNAME), Linux)
 LIB= -pthread -lrt
+CXXFLAGS += -std=c++0x
 endif
 ifeq ($(UNAME), Darwin)
 LIB= -lpthread /usr/lib/libPcmMsr.dylib 
-CXXFLAGS += -I/usr/include 
+CXXFLAGS += -I/usr/include -IMacMSRDriver -std=c++0x
 endif
 ifeq ($(UNAME), FreeBSD)
 CXX=c++
 LIB= -lpthread -lc++
+CXXFLAGS += -std=c++0x
 endif
 
 COMMON_OBJS = msr.o cpucounters.o pci.o client_bw.o utils.o

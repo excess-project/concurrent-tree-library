@@ -56,7 +56,7 @@ inline void win_usleep(int delay_us)
     QueryPerformanceCounter((LARGE_INTEGER *) &t1);
     do {
         QueryPerformanceCounter((LARGE_INTEGER *) &t2);
-        YieldProcessor();
+        _mm_pause();
     } while ((t2-t1) < wait_tick);
 }
 #endif
@@ -73,7 +73,7 @@ inline void MySleep(int delay)
 inline void MySleepMs(int delay_ms)
 {
 #ifdef _MSC_VER
-    if(delay_ms) Sleep(delay_ms);
+    if(delay_ms) Sleep((DWORD)delay_ms);
 #else
     struct timespec sleep_intrval;
     double complete_seconds;
@@ -95,10 +95,17 @@ inline void MySleepUs(int delay_us)
 
 void MySystem(char * sysCmd, char ** argc);
 
+#ifdef _MSC_VER
+#pragma warning (disable : 4068 ) // disable unknown pragma warning
+#endif
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Woverloaded-virtual"
 struct null_stream : public std::streambuf
 {
     void overflow(char) { }
 };
+#pragma clang diagnostic pop
 
 template <class IntType>
 inline std::string unit_format(IntType n)
@@ -137,7 +144,6 @@ inline std::string unit_format(IntType n)
    pcm_compile_assert_failed pcm_compile_assert_failed_; \
    PCM_UNUSED(pcm_compile_assert_failed_);
 
-#ifdef COMPILE_FOR_WINDOWS_7
 #ifdef _MSC_VER
 class ThreadGroupTempAffinity
 {
@@ -145,11 +151,11 @@ class ThreadGroupTempAffinity
 
 	ThreadGroupTempAffinity(); // forbidden
 	ThreadGroupTempAffinity(const ThreadGroupTempAffinity &); // forbidden
+    ThreadGroupTempAffinity& operator = (const ThreadGroupTempAffinity &); // forbidden
 public:
 	ThreadGroupTempAffinity(uint32 core_id);
 	~ThreadGroupTempAffinity();
 };
-#endif
 #endif
 
 #endif

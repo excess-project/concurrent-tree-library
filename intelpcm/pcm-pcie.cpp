@@ -84,7 +84,6 @@ void print_events()
     cerr << "     CRd*      - Demand Code Read\n";
     cerr << "     DRd       - Demand Data Read\n";
     cerr << "     PCIeNSWr  - PCIe Non-snoop write transfer (partial cache line)\n";
-    cerr << "     PRd       - MMIO Read [Haswell Server only: PL verify this on IVT] (Partial Cache Line)\n";
     cerr << "   PCIe write events (PCI devices writing to memory - application reads from disk/network/PCIe device):\n";
     cerr << "     PCIeWiLF  - PCIe Write transfer (non-allocating) (full cache line)\n";
     cerr << "     PCIeItoM  - PCIe Write transfer (allocating) (full cache line)\n";
@@ -92,6 +91,8 @@ void print_events()
     cerr << "     PCIeNSWrF - PCIe Non-snoop write transfer (full cache line)\n";
     cerr << "     ItoM      - PCIe write full cache line\n";
     cerr << "     RFO       - PCIe parial Write\n";
+    cerr << "   CPU MMIO events (CPU reading/writing to PCIe devices):\n";
+    cerr << "     PRd       - MMIO Read [Haswell Server only] (Partial Cache Line)\n";
     cerr << "     WiL       - MMIO Write (Full/Partial)\n\n";
     cerr << " * - NOTE: Depending on the configuration of your BIOS, this tool may report '0' if the message\n";
     cerr << "           has not been selected.\n\n";
@@ -135,7 +136,7 @@ int main(int argc, char * argv[])
     cerr << endl;
     cerr << " Intel(r) Performance Counter Monitor: PCIe Bandwidth Monitoring Utility "<< endl;
     cerr << endl;
-    cerr << " Copyright (c) 2013-2014 Intel Corporation" << endl;
+    cerr << INTEL_PCM_COPYRIGHT << std::endl;
     cerr << " This utility measures PCIe bandwidth in real-time" << endl;
     cerr << endl;
     print_events();
@@ -243,7 +244,7 @@ int main(int argc, char * argv[])
     cerr << "\nDetected "<< m->getCPUBrandString() << " \"Intel(r) microarchitecture codename "<<m->getUArchCodename()<<"\""<<endl;
     if(!(m->hasPCICFGUncore()))
     {
-        cerr << "Jaketown, Ivytown, Haswell Server CPU is required for this tool! Program aborted" << endl;
+        cerr << "Jaketown, Ivytown, Haswell, Broadwell-DE Server CPU is required for this tool! Program aborted" << endl;
         exit(EXIT_FAILURE);
     }
 
@@ -282,7 +283,7 @@ int main(int argc, char * argv[])
 
     uint32 i;
     uint32 delay_ms = uint32(delay * 1000 / num_events / NUM_SAMPLES);
-    delay_ms * num_events * NUM_SAMPLES < delay * 1000 ? delay_ms += 1 : delay_ms = delay_ms; //Adjust the sleep if it's less than delay time
+    if(delay_ms * num_events * NUM_SAMPLES < delay * 1000) ++delay_ms; //Adjust the delay_ms if it's less than delay time
     sample_t sample[max_sockets];
     cerr << "delay_ms: " << delay_ms << endl;
     
@@ -302,7 +303,7 @@ int main(int argc, char * argv[])
         memset(sample,0,sizeof(sample));
         memset(&aggregate_sample,0,sizeof(aggregate_sample));
         
-        if(m->getCPUModel() == PCM::HASWELLX) // Haswell Server
+        if(m->getCPUModel() == PCM::HASWELLX || m->getCPUModel() == PCM::BDX_DE) // Haswell Server
         {
             for(i=0;i<NUM_SAMPLES;i++)
             {
@@ -607,7 +608,7 @@ int main(int argc, char * argv[])
         memset(sample,0,sizeof(sample));
         memset(&aggregate_sample,0,sizeof(aggregate_sample));
         
-        if(m->getCPUModel() == PCM::HASWELLX) // Haswell Server
+        if(m->getCPUModel() == PCM::HASWELLX || m->getCPUModel() == PCM::BDX_DE) // Haswell Server
         {
             for(i=0;i<NUM_SAMPLES;i++)
             {
@@ -838,7 +839,7 @@ void getPCIeEvents(PCM *m, PCM::PCIeEventCode opcode, uint32 delay_ms, sample_t 
                 sample[i].total.PCIeNSWr += (sizeof(PCIeEvents_t)/sizeof(uint64)) * getNumberOfEvents(before[i], after[i]);
                 sample[i].miss.PCIeNSWr += (sizeof(PCIeEvents_t)/sizeof(uint64)) * getNumberOfEvents(before2[i], after2[i]);
                 sample[i].hit.PCIeNSWr += (sample[i].total.PCIeNSWr > sample[i].miss.PCIeNSWr) ? sample[i].total.PCIeNSWr - sample[i].miss.PCIeNSWr : 0;
-                aggregate_sample.PCIeItoM += sample[i].total.PCIeItoM;
+                aggregate_sample.PCIeNSWr += sample[i].total.PCIeNSWr;
                 break;
             case PCM::PCIeNSWrF:
                 sample[i].total.PCIeNSWrF += (sizeof(PCIeEvents_t)/sizeof(uint64)) * getNumberOfEvents(before[i], after[i]);

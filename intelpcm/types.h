@@ -21,9 +21,6 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
         \brief Internal type and constant definitions
 */
 
-// compile for Windows 7 or Windows Server 2008 R2 (processor group support needed for systems with high core count)
-#define COMPILE_FOR_WINDOWS_7
-
 #undef PCM_DEBUG
 
 #include <iostream>
@@ -101,6 +98,20 @@ typedef signed int int32;
 
 #define MEM_LOAD_UOPS_RETIRED_L2_HIT_EVTNR (0xD1)
 #define MEM_LOAD_UOPS_RETIRED_L2_HIT_UMASK (0x02)
+
+// Skylake on-core events
+
+#define SKL_MEM_LOAD_RETIRED_L3_MISS_EVTNR (0xD1)
+#define SKL_MEM_LOAD_RETIRED_L3_MISS_UMASK (0x20)
+
+#define SKL_MEM_LOAD_RETIRED_L3_HIT_EVTNR (0xD1)
+#define SKL_MEM_LOAD_RETIRED_L3_HIT_UMASK (0x04)
+
+#define SKL_MEM_LOAD_RETIRED_L2_MISS_EVTNR (0xD1)
+#define SKL_MEM_LOAD_RETIRED_L2_MISS_UMASK (0x10)
+
+#define SKL_MEM_LOAD_RETIRED_L2_HIT_EVTNR (0xD1)
+#define SKL_MEM_LOAD_RETIRED_L2_HIT_UMASK (0x02)
 
 // architectural on-core events
 
@@ -271,7 +282,7 @@ typedef signed int int32;
 #define IA32_QM_EVTSEL (0xc8d)
 #define IA32_QM_CTR (0xc8e)
 
-#define PCM_INVALID_L3_CACHE_OCCUPANCY ((std::numeric_limits<uint64>::max)())
+#define PCM_INVALID_QOS_MONITORING_DATA ((std::numeric_limits<uint64>::max)())
 
 /* \brief Event Select Register format
 
@@ -463,6 +474,13 @@ struct BecktonUncorePMUCNTCTLRegister
 
 #define PCM_INTEL_PCI_VENDOR_ID (0x8086)
 #define PCM_PCI_VENDOR_ID_OFFSET (0)
+
+// 8 bytes per  QPI flit
+// 4 QPI cycles per QPI flit
+
+#define DATA_BYTES_PER_QPI_FLIT (8)
+#define QPI_CYCLES_PER_QPI_FLIT (4)
+#define DATA_BYTES_PER_QPI_CYCLE (DATA_BYTES_PER_QPI_FLIT/QPI_CYCLES_PER_QPI_FLIT)
 
 // server PCICFG uncore counters
 

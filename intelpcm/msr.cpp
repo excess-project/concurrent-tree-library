@@ -15,9 +15,10 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 //            Jim Harris (FreeBSD)
 
 #include <sys/types.h>
+#include <stdio.h>
+#include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <stdio.h>
 #ifndef _MSC_VER
 #include <unistd.h>
 #endif
@@ -30,7 +31,6 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #include <windows.h>
 #include "utils.h"
 #include "Winmsrdriver\win7\msrstruct.h"
-#include "winring0/OlsDef.h"
 #include "winring0/OlsApiInitExt.h"
 
 extern HMODULE hOpenLibSys;
@@ -67,12 +67,8 @@ int32 MsrHandle::write(uint64 msr_number, uint64 value)
 	cvt_ds cvt;
 	cvt.ui64 = value;
 
-	#ifdef COMPILE_FOR_WINDOWS_7
 	ThreadGroupTempAffinity affinity(cpu_id);
-	BOOL status = Wrmsr((DWORD)msr_number, cvt.ui32.low, cvt.ui32.high);
-    #else
-	BOOL status = WrmsrTx((DWORD)msr_number, cvt.ui32.low, cvt.ui32.high,(1UL << cpu_id));
-    #endif
+	DWORD status = Wrmsr((DWORD)msr_number, cvt.ui32.low, cvt.ui32.high);
 
 	return status?sizeof(uint64):0;
 }
@@ -88,18 +84,14 @@ int32 MsrHandle::read(uint64 msr_number, uint64 * value)
 		req.msr_address = msr_number;
 		BOOL status = DeviceIoControl(hDriver, IO_CTL_MSR_READ, &req, sizeof(MSR_Request), value, sizeof(uint64), &reslength, NULL);
 		assert(status && "Error in DeviceIoControl");
-		return reslength;
+		return (int32)reslength;
 	}
 
 	cvt_ds cvt;
 	cvt.ui64 = 0;
 
-	#ifdef COMPILE_FOR_WINDOWS_7
 	ThreadGroupTempAffinity affinity(cpu_id);
-	BOOL status = Rdmsr((DWORD)msr_number, &(cvt.ui32.low), &(cvt.ui32.high));
-    #else
-	BOOL status = RdmsrTx((DWORD)msr_number, &(cvt.ui32.low), &(cvt.ui32.high), (1UL << cpu_id));
-    #endif
+	DWORD status = Rdmsr((DWORD)msr_number, &(cvt.ui32.low), &(cvt.ui32.high));
 
 	if(status) *value = cvt.ui64;
 	

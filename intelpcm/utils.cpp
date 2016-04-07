@@ -17,10 +17,8 @@ CT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT
 // written by Andrey Semin
 
 #include <iostream>
-#include <fstream>
-#include <climits>
-#include <cstring>
 #include <cassert>
+#include <climits>
 #ifdef _MSC_VER
 #include <process.h>
 #include <comdef.h>
@@ -47,17 +45,16 @@ void exit_cleanup(void)
 
 #ifdef _MSC_VER
 
-#ifdef COMPILE_FOR_WINDOWS_7
 ThreadGroupTempAffinity::ThreadGroupTempAffinity(uint32 core_id)
 {
     GROUP_AFFINITY NewGroupAffinity;
     memset(&NewGroupAffinity, 0, sizeof(GROUP_AFFINITY));
     memset(&PreviousGroupAffinity, 0, sizeof(GROUP_AFFINITY));
-    uint32 currentGroupSize = 0;
+    DWORD currentGroupSize = 0;
 
-    while (core_id >= (currentGroupSize = GetMaximumProcessorCount(NewGroupAffinity.Group)))
+    while ((DWORD)core_id >= (currentGroupSize = GetActiveProcessorCount(NewGroupAffinity.Group)))
     {
-        core_id -= currentGroupSize;
+        core_id -= (uint32)currentGroupSize;
         ++NewGroupAffinity.Group;
     }
     NewGroupAffinity.Mask = 1ULL << core_id;
@@ -67,7 +64,6 @@ ThreadGroupTempAffinity::~ThreadGroupTempAffinity()
 {
     SetThreadGroupAffinity(GetCurrentThread(),&PreviousGroupAffinity,NULL);
 }
-#endif
 
 LONG unhandled_exception_handler(LPEXCEPTION_POINTERS p)
 {
@@ -235,8 +231,10 @@ void set_signal_handlers(void)
 // to fix Cygwin/BASH setting Ctrl+C handler need first to restore the default one
 	handlerStatus = SetConsoleCtrlHandler(NULL, FALSE); // restores normal processing of CTRL+C input
 	if(handlerStatus == 0) {
-        _com_error error(GetLastError());
-		std::wcerr << "Failed to set Ctrl+C hanlder. Error code: " << GetLastError() << " " << error.ErrorMessage() << std::endl;
+        std::wcerr << "Failed to set Ctrl+C hanlder. Error code: " << GetLastError() << " ";
+        const TCHAR * errorStr = _com_error(GetLastError()).ErrorMessage(); 
+        if (errorStr) std::wcerr << errorStr;
+        std::wcerr << std::endl;
 		_exit(EXIT_FAILURE);
 	}
 	SetConsoleCtrlHandler((PHANDLER_ROUTINE)sigINT_handler, TRUE);
@@ -256,7 +254,7 @@ void set_signal_handlers(void)
     sigaction(SIGTERM, &saINT, NULL);
     sigaction(SIGSEGV, &saINT, NULL);
 
-    saINT.sa_flags = SA_RESTART || SA_NOCLDSTOP;
+    saINT.sa_flags = SA_RESTART | SA_NOCLDSTOP;
     sigaction(SIGCHLD, &saINT, NULL); // get there is our child exits. do nothing if it stoped/continued
 
     // install SIGHUP handler to restart

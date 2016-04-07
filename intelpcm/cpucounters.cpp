@@ -23,8 +23,6 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 //#define PCM_TEST_FALLBACK_TO_ATOM
 
-#include <assert.h>
-#include <stdarg.h>
 #include <stdio.h>
 #ifdef INTELPCM_EXPORTS
 // Intelpcm.h includes cpucounters.h
@@ -53,7 +51,6 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #include <string.h>
 #include <limits>
 #include <map>
-#include <fstream>
 #include <algorithm>
 
 #ifdef __APPLE__
@@ -118,6 +115,7 @@ public:
     {
         // unlock
         ReleaseMutex(Mutex);
+        CloseHandle(Mutex);
     }
 };
 #else // Linux or Apple
@@ -180,18 +178,50 @@ public:
 }; 
 #endif // end of _MSC_VER else
 
+
+class TemporalThreadAffinity  // speedup trick for Linux
+{
+#ifdef __linux__
+    cpu_set_t old_affinity;
+    TemporalThreadAffinity(); // forbiden
+
+public:
+    TemporalThreadAffinity(uint32 core_id)
+    {
+        pthread_getaffinity_np(pthread_self(), sizeof(cpu_set_t), &old_affinity);
+
+        cpu_set_t new_affinity;
+        CPU_ZERO(&new_affinity);
+        CPU_SET(core_id, &new_affinity);
+        pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &new_affinity);
+    }
+    ~TemporalThreadAffinity()
+    {
+        pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &old_affinity);
+    }
+#else // not implemented for windows or os x
+    TemporalThreadAffinity(); // forbiden
+
+public:
+    TemporalThreadAffinity(uint32) { }
+#endif
+};
+
+
 PCM * PCM::instance = NULL;
 
-int bitCount(uint64 n)
+/*
+static int bitCount(uint64 n)
 {
     int count = 0;
     while (n)
     {
-        count += (int)(n & 0x00000001);
-        n >>= 1;
+        count += static_cast<int>(n & 0x00000001);
+        n >>= static_cast<uint64>(1);
     }
     return count;
 }
+*/
 
 PCM * PCM::getInstance()
 {
@@ -204,7 +234,7 @@ PCM * PCM::getInstance()
     return instance = new PCM();
 }
 
-uint32 build_bit_ui(int beg, int end)
+uint32 build_bit_ui(uint32 beg, uint32 end)
 {
     uint32 myll = 0;
     if (end == 31)
@@ -245,7 +275,7 @@ uint64 build_bit(uint32 beg, uint32 end)
     uint64 myll = 0;
     if (end == 63)
     {
-        myll = (uint64)(-1);
+        myll = static_cast<uint64>(-1);
     }
     else
     {
@@ -308,14 +338,13 @@ uint64 PCM::extractUncoreFixedCounterValue(uint64 val)
     return val;
 }
 
-uint64 PCM::extractL3CacheOccupancy(uint64 val)
+uint64 PCM::extractQOSMonitoring(uint64 val)
 {
 	//Check if any of the error bit(63) or Unavailable bit(62) of the IA32_QM_CTR MSR are 1
-
 	if(val & (3ULL<<62))
 	{
 		// invalid reading
-		return PCM_INVALID_L3_CACHE_OCCUPANCY;
+        return static_cast<uint64>(PCM_INVALID_QOS_MONITORING_DATA);
 	}
 
 	// valid reading
@@ -325,11 +354,11 @@ int32 extractThermalHeadroom(uint64 val)
 {
     if(val & (1ULL<<31ULL))
     {  // valid reading
-       return (int32)extract_bits(val,16,22);
+       return static_cast<int32>(extract_bits(val, 16, 22));
     }
 
     // invalid reading
-    return PCM_INVALID_THERMAL_HEADROOM;
+    return static_cast<int32>(PCM_INVALID_THERMAL_HEADROOM);
 }
 
 
@@ -337,8 +366,8 @@ uint64 get_frequency_from_cpuid();
 
 union PCM_CPUID_INFO
 {
-	int array[4];
-        struct { int eax,ebx,ecx,edx; } reg ;
+    int array[4];
+    struct { unsigned int eax, ebx, ecx, edx; } reg;
 };
 
 void pcm_cpuid(int leaf, PCM_CPUID_INFO & info)
@@ -390,6 +419,10 @@ bool PCM::detectModel()
     cpu_family = (((cpuinfo.array[0]) >> 8) & 0xf) | ((cpuinfo.array[0] & 0xf00000) >> 16);
     cpu_model = original_cpu_model = (((cpuinfo.array[0]) & 0xf0) >> 4) | ((cpuinfo.array[0] & 0xf0000) >> 12);
 
+    if (cpuinfo.reg.ecx & (1UL<<31UL)) {
+        std::cerr << "Detected a hypervisor/virtualization technology. Some metrics might not be available due to configuration or availability of virtual hardware features." << std::endl;
+    }
+
     if (max_cpuid >= 0xa)
     {
         // get counter related info
@@ -413,11 +446,45 @@ bool PCM::detectModel()
     return true;
 }
 
-bool PCM::L3CacheOccupancyMetricAvailable()
+bool PCM::QOSMetricAvailable()
 {
 	PCM_CPUID_INFO cpuinfo;
 	pcm_cpuid(0x7,0,cpuinfo);
 	return (cpuinfo.reg.ebx & (1<<12))?true:false;
+}
+
+bool PCM::L3QOSMetricAvailable()
+{
+	PCM_CPUID_INFO cpuinfo;
+	pcm_cpuid(0xf,0,cpuinfo);
+	return (cpuinfo.reg.edx & (1<<1))?true:false;
+}
+
+bool PCM::L3CacheOccupancyMetricAvailable()
+{
+	PCM_CPUID_INFO cpuinfo;
+	if (!(QOSMetricAvailable() & L3QOSMetricAvailable()))
+		return false;
+	pcm_cpuid(0xf,0x1,cpuinfo);
+	return (cpuinfo.reg.edx & 1)?true:false;
+}
+
+bool PCM::CoreLocalMemoryBWMetricAvailable()
+{
+	PCM_CPUID_INFO cpuinfo;
+	if (!(QOSMetricAvailable() & L3QOSMetricAvailable()))
+			return false;
+	pcm_cpuid(0xf,0x1,cpuinfo);
+	return (cpuinfo.reg.edx & 2)?true:false;
+}
+
+bool PCM::CoreRemoteMemoryBWMetricAvailable()
+{
+	PCM_CPUID_INFO cpuinfo;
+	if (!(QOSMetricAvailable() & L3QOSMetricAvailable()))
+		return false;
+	pcm_cpuid(0xf, 0x1, cpuinfo);
+	return (cpuinfo.reg.edx & 4) ? true : false;
 }
 
 unsigned PCM::getMaxRMID() const
@@ -429,57 +496,64 @@ unsigned PCM::getMaxRMID() const
 	return maxRMID;
 }
 
-void PCM::initL3CacheOccupancyMonitoring()
+void PCM::initRMID()
 {
-        /* Check if the core has CacheMonitoring support */
-		if(!L3CacheOccupancyMetricAvailable())
-        {
-            return;
-        }
-
-		unsigned maxRMID;
-
-		const uint64 event = 1; //L3 Occupancy monitoring
-
-		/* Calculate maximum number of RMID supported by socket */
-		maxRMID = getMaxRMID();
-		// std::cout << "Maximum RMIDs per socket in the system : " << maxRMID << "\n";
-
-		std::vector<uint32> rmid(num_sockets);
-
-		for(int i = 0; i < num_sockets; i ++)
+	unsigned maxRMID;
+	/* Calculate maximum number of RMID supported by socket */
+	maxRMID = getMaxRMID();
+	// std::cout << "Maximum RMIDs per socket in the system : " << maxRMID << "\n";
+	std::vector<uint32> rmid(num_sockets);
+	for(int32 i = 0; i < num_sockets; i ++)
 			rmid[i] = maxRMID - 1;
 
-		/* Associate each core with 1 RMID */
+	/* Associate each core with 1 RMID */
+	for(int32 core = 0; core < num_cores; core ++ )
+	{
+		if(!isCoreOnline(core)) continue;
 
-		for(int32 core = 0; core < num_cores; core ++ )
-		{
-                        if(!isCoreOnline(core)) continue;
-			uint64 msr_pqr_assoc = 0 ;
-			uint64 msr_qm_evtsel = 0 ;
+		uint64 msr_pqr_assoc = 0 ;
+		uint64 msr_qm_evtsel = 0 ;
+                MSR[core]->lock();
+		//Read 0xC8F MSR for each core
+		MSR[core]->read(IA32_PQR_ASSOC, &msr_pqr_assoc);
+                //std::cout << "initRMID reading IA32_PQR_ASSOC 0x"<< std::hex << msr_pqr_assoc << std::dec << std::endl;
 
-			//Read 0xC8F MSR for each core
-			MSR[core]->read(IA32_PQR_ASSOC, &msr_pqr_assoc);
+		//std::cout << "Socket Id : " << topology[core].socket;
+		msr_pqr_assoc &= 0xffffffff00000000ULL;
+		msr_pqr_assoc |= (uint64)(rmid[topology[core].socket] & ((1ULL<<10)-1ULL));
+                //std::cout << "initRMID writing IA32_PQR_ASSOC 0x"<< std::hex << msr_pqr_assoc << std::dec << std::endl;
+		//Write 0xC8F MSR with new RMID for each core
+		MSR[core]->write(IA32_PQR_ASSOC,msr_pqr_assoc);
 
-			//std::cout << "Socket Id : " << topology[core].socket;
-			msr_pqr_assoc &= 0xffffffff00000000ULL;
-			msr_pqr_assoc |= (uint64)(rmid[topology[core].socket] & ((1ULL<<10)-1ULL));
-			//Write 0xC8F MSR with new RMID for each core
-			MSR[core]->write(IA32_PQR_ASSOC,msr_pqr_assoc);
+		msr_qm_evtsel = static_cast<uint64>(rmid[topology[core].socket] & ((1ULL<<10)-1ULL));
+		msr_qm_evtsel <<= 32 ;
+		//Write 0xC8D MSR with new RMID for each core
+                //std::cout << "initRMID writing IA32_QM_EVTSEL 0x"<< std::hex << msr_qm_evtsel << std::dec << std::endl;
+		MSR[core]->write(IA32_QM_EVTSEL,msr_qm_evtsel);
+                MSR[core]->unlock();
 
-			//Write MSR 0xC8D , the event id and rmid for each core
-			msr_qm_evtsel = rmid[topology[core].socket] & ((1ULL<<10)-1ULL) ;
-			msr_qm_evtsel <<= 32 ;
-			msr_qm_evtsel |= event & ((1ULL<<8)-1ULL);
-			MSR[core]->write(IA32_QM_EVTSEL,msr_qm_evtsel);
-
-			// std::cout << "Assigning RMID " << rmid[topology[core].socket] << " to core " << core  << " on socket " << topology[core].socket << "\n";
-			rmid[topology[core].socket] --;
-		}
-
-		/* Get The scaling factor by running CPUID.0xF.0x1 instruction */
-		L3ScalingFactor = getL3ScalingFactor();
+		/* Initializing the memory bandwidth counters */
+        memory_bw_local.push_back(std::shared_ptr<CounterWidthExtender>(new CounterWidthExtender(new CounterWidthExtender::MBLCounter(MSR[core]), 24, 500)));
+        memory_bw_total.push_back(std::shared_ptr<CounterWidthExtender>(new CounterWidthExtender(new CounterWidthExtender::MBTCounter(MSR[core]), 24, 500)));
+		rmid[topology[core].socket] --;
+	}
+	/* Get The scaling factor by running CPUID.0xF.0x1 instruction */
+	L3ScalingFactor = getL3ScalingFactor();
 }
+
+void PCM::initQOSevent(const uint64 event, const int32 core)
+{
+   if(!isCoreOnline(core)) return;
+   uint64 msr_qm_evtsel = 0 ;
+   //Write 0xC8D MSR with the event id
+   MSR[core]->read(IA32_QM_EVTSEL, &msr_qm_evtsel);
+   //std::cout << "initQOSevent reading IA32_QM_EVTSEL 0x"<< std::hex << msr_qm_evtsel << std::dec << std::endl;
+   msr_qm_evtsel &= 0xfffffffffffffff0ULL;
+   msr_qm_evtsel |= event & ((1ULL<<8)-1ULL);
+   //std::cout << "initQOSevent writing IA32_QM_EVTSEL 0x"<< std::hex << msr_qm_evtsel << std::dec << std::endl;
+   MSR[core]->write(IA32_QM_EVTSEL,msr_qm_evtsel);
+}
+
 
 void PCM::initCStateSupportTables()
 {
@@ -487,7 +561,7 @@ void PCM::initCStateSupportTables()
 #define PCM_CSTATE_ARRAY(array_ , val ) \
     { \
         static uint64 tmp[] = val; \
-        PCM_COMPILE_ASSERT( sizeof(tmp)/sizeof(uint64) == MAX_C_STATE + 1); \
+        PCM_COMPILE_ASSERT(sizeof(tmp) / sizeof(uint64) == (static_cast<int>(MAX_C_STATE)+1)); \
         array_ = tmp; \
         break; \
     }
@@ -500,6 +574,7 @@ void PCM::initCStateSupportTables()
         case ATOM_CENTERTON:
         case ATOM_AVOTON:
         case ATOM_BAYTRAIL:
+        case ATOM_CHERRYTRAIL:
             PCM_CSTATE_ARRAY(pkgCStateMsr, PCM_PARAM_PROTECT({0,    0,  0x3F8,      0,  0x3F9,  0,  0x3FA,  0,      0,  0,  0 }) );
         case NEHALEM_EP:
         case NEHALEM:
@@ -516,9 +591,13 @@ void PCM::initCStateSupportTables()
         case HASWELL:
         case HASWELL_2:
         case HASWELLX:
+        case BDX_DE:
             PCM_CSTATE_ARRAY(pkgCStateMsr, PCM_PARAM_PROTECT({0,    0,  0x60D,  0x3F8,      0,  0,  0x3F9,  0x3FA,  0,  0,  0}) );
         case HASWELL_ULT:
         case BROADWELL:
+        case SKL:
+        case SKL_UY:
+        case BROADWELL_XEON_E3:
             PCM_CSTATE_ARRAY(pkgCStateMsr, PCM_PARAM_PROTECT({0,    0,  0x60D,  0x3F8,      0,  0,  0x3F9,  0x3FA,  0x630,  0x631,  0x632}) );
 
         default:
@@ -548,9 +627,14 @@ void PCM::initCStateSupportTables()
         case HASWELL_2:
         case HASWELL_ULT:
         case HASWELLX:
+        case BDX_DE:
         case BROADWELL:
+        case BROADWELL_XEON_E3:
         case ATOM_BAYTRAIL:
         case ATOM_AVOTON:
+        case ATOM_CHERRYTRAIL:
+        case SKL_UY:
+        case SKL:
             PCM_CSTATE_ARRAY(coreCStateMsr, PCM_PARAM_PROTECT({0,	0,	0,	0x3FC,	0,	0,	0x3FD,	0x3FE,	0,	0,	0}) );
         default:
             std::cerr << "PCM error: core C-states support array is not initialized. Core C-states metrics will not be shown." << std::endl;
@@ -563,68 +647,6 @@ bool PCM::discoverSystemTopology()
     typedef std::map<uint32, uint32> socketIdMap_type;
     socketIdMap_type socketIdMap;
 
-#ifdef _MSC_VER
-// version for Windows
-
-#ifdef COMPILE_FOR_WINDOWS_7
-    DWORD GroupStart[5];     // at most 4 groups on Windows 7
-    GroupStart[0] = 0;
-    GroupStart[1] = GetActiveProcessorCount(0);
-    GroupStart[2] = GroupStart[1] + GetActiveProcessorCount(1);
-    GroupStart[3] = GroupStart[2] + GetActiveProcessorCount(2);
-    GroupStart[4] = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
-    if (GroupStart[3] + GetActiveProcessorCount(3) != GetActiveProcessorCount(ALL_PROCESSOR_GROUPS))
-    {
-        std::cerr << "Error in processor group size counting (1)" << std::endl;
-        std::cerr << "Make sure your binary is compiled for 64-bit: using 'x64' platform configuration." << std::endl;
-        return false;
-    }
-    char * slpi = new char[sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)];
-    DWORD len = sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX);
-    DWORD res = GetLogicalProcessorInformationEx(RelationAll, (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)slpi, &len);
-
-    while (res == FALSE)
-    {
-        delete[] slpi;
-
-        if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-        {
-            slpi = new char[len];
-            res = GetLogicalProcessorInformationEx(RelationAll, (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)slpi, &len);
-        }
-        else
-        {
-            _com_error error(GetLastError());
-            std::wcerr << "Error in Windows function 'GetLogicalProcessorInformationEx': " <<
-                GetLastError() <<  " " << error.ErrorMessage() << std::endl;
-            return false;
-        }
-    }
-
-    char * base_slpi = slpi;
-    PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX pi = NULL;
-
-    for ( ; slpi < base_slpi + len; slpi += pi->Size)
-    {
-        pi = (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)slpi;
-        if (pi->Relationship == RelationProcessorCore)
-        {
-            threads_per_core = (pi->Processor.Flags == LTP_PC_SMT) ? 2 : 1;
-            // std::cout << "thr per core: "<< threads_per_core << std::endl;
-            num_cores += threads_per_core;
-        }
-    }
-
-
-    if (num_cores != GetActiveProcessorCount(ALL_PROCESSOR_GROUPS))
-    {
-        std::cerr << "Error in processor group size counting: " << num_cores << "!=" << GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) << std::endl;
-        std::cerr << "Make sure your binary is compiled for 64-bit: using 'x64' platform configuration." << std::endl;
-        return false;
-    }
-
-#undef PCM_WIN7_USE_CPUID_FOR_TOPOLOGY_ENUMERATION
-#ifdef PCM_WIN7_USE_CPUID_FOR_TOPOLOGY_ENUMERATION
     PCM_CPUID_INFO cpuid_args;
     pcm_cpuid(1, cpuid_args);
 
@@ -649,11 +671,60 @@ bool PCM::discoverSystemTopology()
         return false;
     }
 
-    for (int i = 0; i < num_cores; i++)
+#ifdef _MSC_VER
+// version for Windows 7 and later version
+
+    char * slpi = new char[sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)];
+    DWORD len = (DWORD)sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX);
+    BOOL res = GetLogicalProcessorInformationEx(RelationAll, (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)slpi, &len);
+
+    while (res == FALSE)
+    {
+        delete[] slpi;
+
+        if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
+        {
+            slpi = new char[len];
+            res = GetLogicalProcessorInformationEx(RelationAll, (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)slpi, &len);
+        }
+        else
+        {
+            std::wcerr << "Error in Windows function 'GetLogicalProcessorInformationEx': " <<
+                GetLastError() << " ";
+            const TCHAR * strError = _com_error(GetLastError()).ErrorMessage(); 
+            if (strError) std::wcerr << strError;
+            std::wcerr << std::endl;
+            return false;
+        }
+    }
+
+    char * base_slpi = slpi;
+    PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX pi = NULL;
+
+    for ( ; slpi < base_slpi + len; slpi += (DWORD)pi->Size)
+    {
+        pi = (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)slpi;
+        if (pi->Relationship == RelationProcessorCore)
+        {
+            threads_per_core = (pi->Processor.Flags == LTP_PC_SMT) ? 2 : 1;
+            // std::cout << "thr per core: "<< threads_per_core << std::endl;
+            num_cores += threads_per_core;
+        }
+    }
+
+
+    if (num_cores != GetActiveProcessorCount(ALL_PROCESSOR_GROUPS))
+    {
+        std::cerr << "Error in processor group size counting: " << num_cores << "!=" << GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) << std::endl;
+        std::cerr << "Make sure your binary is compiled for 64-bit: using 'x64' platform configuration." << std::endl;
+        return false;
+    }
+
+    for (int i = 0; i < (int)num_cores; i++)
     {
         ThreadGroupTempAffinity affinity(i);
 
-        pcm_cpuid(0xb, cpuid_args);
+        pcm_cpuid(0xb, 0x0, cpuid_args);
 
         int apic_id = cpuid_args.array[3];
 
@@ -665,99 +736,9 @@ bool PCM::discoverSystemTopology()
         topology.push_back(entry);
         socketIdMap[entry.socket] = 0;
     }
-#else
-
-    topology.resize(num_cores);
-
-    slpi = base_slpi;
-    pi = NULL;
-
-    for ( ; slpi < base_slpi + len; slpi += pi->Size)
-    {
-        pi = (PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX)slpi;
-        if (pi->Relationship == RelationNumaNode)
-        {
-            ++num_sockets;
-            for (unsigned int c = 0; c < (unsigned int)num_cores; ++c)
-            {
-                // std::cout << "c:"<<c<<" GroupStart[slpi->NumaNode.GroupMask.Group]: "<<GroupStart[slpi->NumaNode.GroupMask.Group]<<std::endl;
-                if (c < GroupStart[pi->NumaNode.GroupMask.Group] || c >= GroupStart[(pi->NumaNode.GroupMask.Group) + 1])
-                {
-                    //std::cout <<"core "<<c<<" is not in group "<< slpi->NumaNode.GroupMask.Group << std::endl;
-                    continue;
-                }
-                if ((1LL << (c - GroupStart[pi->NumaNode.GroupMask.Group])) & pi->NumaNode.GroupMask.Mask)
-                {
-                    topology[c].core_id = c;
-                    topology[c].os_id = c;
-                    topology[c].socket = pi->NumaNode.NodeNumber;
-                    // std::cout << "Core "<< c <<" is in NUMA node "<< topology[c].socket << " and belongs to processor group " << slpi->NumaNode.GroupMask.Group <<std::endl;
-                }
-            }
-        }
-    }
-#endif
 
     delete[] base_slpi;
 
-#else // windows, not windows 7
-	int32 size = 1;
-	SYSTEM_LOGICAL_PROCESSOR_INFORMATION * slpi = new SYSTEM_LOGICAL_PROCESSOR_INFORMATION[size];
-    DWORD len = sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
-    DWORD res = GetLogicalProcessorInformation(slpi, &len);
-
-    while (res == FALSE)
-    {
-        delete[] slpi;
-
-        if (GetLastError() == ERROR_INSUFFICIENT_BUFFER)
-        {
-			size = (int32) len / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
-            slpi = new SYSTEM_LOGICAL_PROCESSOR_INFORMATION[size];
-            res = GetLogicalProcessorInformation(slpi, &len);
-        }
-        else
-        {
-            _com_error error(GetLastError());
-            std::wcerr << "Error in Windows function 'GetLogicalProcessorInformation': " <<
-                GetLastError() << " " << error.ErrorMessage() << std::endl;
-            return false;
-        }
-    }
-
-    for (i = 0; i < size; ++i)
-    {
-        if (slpi[i].Relationship == RelationProcessorCore)
-        {
-            //std::cout << "Physical core found, mask: "<<slpi[i].ProcessorMask<< std::endl;
-            threads_per_core = bitCount(slpi[i].ProcessorMask);
-            num_cores += threads_per_core;
-        }
-    }
-    topology.resize(num_cores);
-
-    for (i = 0; i < size; ++i)
-    {
-        if (slpi[i].Relationship == RelationNumaNode)
-        {
-            //std::cout << "NUMA node "<<slpi[i].NumaNode.NodeNumber<<" cores: "<<slpi[i].ProcessorMask<< std::endl;
-            ++num_sockets;
-            for (int c = 0; c < num_cores; ++c)
-            {
-                if ((1LL << c) & slpi[i].ProcessorMask)
-                {
-                    topology[c].core_id = c;
-                    topology[c].os_id = c;
-                    topology[c].socket = slpi[i].NumaNode.NodeNumber;
-                    //std::cout << "Core "<< c <<" is in NUMA node "<< topology[c].socket << std::endl;
-                }
-            }
-        }
-    }
-
-    delete[] slpi;
-
-#endif // end of COMPILE_FOR_WINDOWS_7 
 #else
     // for Linux and Mac OS
 
@@ -804,49 +785,27 @@ bool PCM::discoverSystemTopology()
     {
         if (strncmp(buffer, "processor", sizeof("processor") - 1) == 0)
         {
-            if (entry.os_id >= 0)
-            {
-                topology[entry.os_id] = entry;
-                ++num_online_cores;
-                if (entry.socket == 0 && entry.core_id == 0) ++threads_per_core;
-            }
             sscanf(buffer, "processor\t: %d", &entry.os_id);
             //std::cout << "os_core_id: "<<entry.os_id<< std::endl;
-            continue;
-        }
-        if (strncmp(buffer, "physical id", sizeof("physical id") - 1) == 0)
-        {
-            sscanf(buffer, "physical id\t: %d", &entry.socket);
-            //std::cout << "physical id: "<<entry.socket<< std::endl;
+            TemporalThreadAffinity _(entry.os_id);
+            pcm_cpuid(0xb, 0x0, cpuid_args);
+            int apic_id = cpuid_args.array[3];
+
+            entry.socket = apic_id / apic_ids_per_package;
+            entry.core_id = (apic_id % apic_ids_per_package) / apic_ids_per_core;
+
+            topology[entry.os_id] = entry;
             socketIdMap[entry.socket] = 0;
-            continue;
+            ++num_online_cores;
         }
-        if (strncmp(buffer, "core id", sizeof("core id") - 1) == 0)
-        {
-            sscanf(buffer, "core id\t: %d", &entry.core_id);
-            //std::cout << "core id: "<<entry.core_id<< std::endl;
-            continue;
-        }
-        if (num_phys_cores_per_socket == 0 && strncmp(buffer, "cpu cores", sizeof("cpu cores") - 1) == 0)
-        {
-            sscanf(buffer, "cpu cores\t: %d", &num_phys_cores_per_socket);
-            //std::cout << "cpu cores: " << num_phys_cores_per_socket << std::endl;
-            continue;
-        }
-    }
-    if (entry.os_id >= 0)
-    {
-        topology[entry.os_id] = entry;
-        ++num_online_cores;
-        if (entry.socket == 0 && entry.core_id == 0) ++threads_per_core;
     }
     fclose(f_cpuinfo);
 
 #elif defined(__FreeBSD__) 
 
     size_t size = sizeof(num_cores);
-    cpuctl_cpuid_args_t cpuid_args;
-    int fd, apic_ids_per_package, apic_ids_per_core;
+    cpuctl_cpuid_args_t cpuid_args_freebds;
+    int fd;
 
     if(0 != sysctlbyname("kern.smp.cpus", &num_cores, &size, NULL, 0))
     {
@@ -859,29 +818,6 @@ bool PCM::discoverSystemTopology()
         std::cout << "cpuctl(4) not loaded." << std::endl;
         return false;
     }
- 
-    do_cpuid(1, cpuid_args.data);
-
-    apic_ids_per_package = (cpuid_args.data[1] & 0x00FF0000) >> 16;
-
-    if (apic_ids_per_package == 0)
-    {
-        std::cout << "apic_ids_per_package == 0" << std::endl;
-        return false;
-    }
-
-    cpuid_count(0xb, 0x0, cpuid_args.data);
-
-    if ((cpuid_args.data[2] & 0xFF00) == 0x100)
-        apic_ids_per_core = cpuid_args.data[1] & 0xFFFF;
-    else
-        apic_ids_per_core = 1;
-
-    if (apic_ids_per_core == 0)
-    {
-        std::cout << "apic_ids_per_core == 0" << std::endl;
-        return false;
-    }
 
     for (int i = 0; i < num_cores; i++)
     {
@@ -891,11 +827,11 @@ bool PCM::discoverSystemTopology()
         sprintf(cpuctl_name, "/dev/cpuctl%d", i);
         fd = ::open(cpuctl_name, O_RDWR);
 
-        cpuid_args.level = 0xb;
+        cpuid_args_freebds.level = 0xb;
 
-        ::ioctl(fd, CPUCTL_CPUID, &cpuid_args);
+        ::ioctl(fd, CPUCTL_CPUID, &cpuid_args_freebds);
 
-        apic_id = cpuid_args.data[3];
+        apic_id = cpuid_args_freebds.data[3];
 
         entry.os_id = i;
         entry.socket = apic_id / apic_ids_per_package;
@@ -939,10 +875,9 @@ bool PCM::discoverSystemTopology()
     
     // The OSX version needs the MSR handle earlier so that it can build the CPU topology.
     // This topology functionality should potentially go into a different KEXT
-    MSR = new SafeMsrHandle *[num_cores];
     for(int i = 0; i < num_cores; i++)
     {
-        MSR[i] = new SafeMsrHandle(i);
+        MSR.push_back(std::shared_ptr<SafeMsrHandle>(new SafeMsrHandle(i)) );
     } 
 
     TopologyEntry *entries = new TopologyEntry[num_cores];
@@ -962,10 +897,10 @@ bool PCM::discoverSystemTopology()
 #endif //end of ifdef _MSC_VER
 
     if(num_cores == 0) {
-        num_cores = topology.size();
+        num_cores = (int32)topology.size();
     }
     if(num_sockets == 0) {
-        num_sockets = (std::max)(socketIdMap.size(), (size_t)1);
+        num_sockets = (int32)(std::max)(socketIdMap.size(), (size_t)1);
     }
 
     socketIdMap_type::iterator s = socketIdMap.begin();
@@ -974,9 +909,9 @@ bool PCM::discoverSystemTopology()
         s->second = sid++;
     }
 
-    for (int i = 0; (i < num_cores) && (!socketIdMap.empty()); ++i)
+    for (int i = 0; (i < (int)num_cores) && (!socketIdMap.empty()); ++i)
     {
-        if(isCoreOnline(i))
+        if(isCoreOnline((int32)i))
           topology[i].socket = socketIdMap[topology[i].socket];
     }
 
@@ -991,7 +926,7 @@ bool PCM::discoverSystemTopology()
 
     if(threads_per_core == 0)
     {
-        for (int i = 0; i < num_cores; ++i)
+        for (int i = 0; i < (int)num_cores; ++i)
         {
             if(topology[i].socket == topology[0].socket && topology[i].core_id == topology[0].core_id)
                 ++threads_per_core;
@@ -1038,8 +973,8 @@ void PCM::printSystemTopology() const
     else
     {
         std::cerr << "Offlined cores: ";
-        for (int i = 0; i < num_cores; ++i)
-            if(isCoreOnline(i) == false)
+        for (int i = 0; i < (int)num_cores; ++i)
+            if(isCoreOnline((int32)i) == false)
                 std::cerr << i << " ";
         std::cerr << std::endl;
     }
@@ -1055,29 +990,23 @@ void PCM::printSystemTopology() const
     }
 }
 
-void PCM::initMSR()
+bool PCM::initMSR()
 {
-    int32 i = 0;
-
 #ifndef __APPLE__
-    MSR = new SafeMsrHandle *[num_cores];
     try
     {
-        for (i = 0; i < num_cores; ++i)
+        for (int i = 0; i < (int)num_cores; ++i)
         {
-            MSR[i] = isCoreOnline(i) ? (new SafeMsrHandle(i)):(new SafeMsrHandle()); // the core is offlined, assign an invalid MSR handle
+            if (isCoreOnline((int32)i))
+                MSR.push_back(std::shared_ptr<SafeMsrHandle>(new SafeMsrHandle(i)));
+            else // the core is offlined, assign an invalid MSR handle
+                MSR.push_back(std::shared_ptr<SafeMsrHandle>(new SafeMsrHandle()));
         }
     }
     catch (...)
     {
         // failed
-        for (int j = 0; j < i; j++)
-        {
-            if(MSR[j])
-              delete MSR[j];
-        }
-        delete[] MSR;
-        MSR = NULL;
+        MSR.clear();
 
         std::cerr << "Can not access CPUs Model Specific Registers (MSRs)." << std::endl;
 #ifdef _MSC_VER
@@ -1089,14 +1018,15 @@ void PCM::initMSR()
         std::cerr << "Ensure cpuctl module is loaded and that you have read and write" << std::endl;
         std::cerr << "permissions for /dev/cpuctl* devices (the 'chown' command can help)." << std::endl;
 #endif
-
+	    return false;
     }
 #endif
+    return true;
 }
 
 bool PCM::detectNominalFrequency()
 {
-    if (MSR)
+    if (MSR.size())
     {
         uint64 freq = 0;
         MSR[socketRefCore[0]]->read(PLATFORM_INFO_ADDR, &freq);
@@ -1105,10 +1035,12 @@ bool PCM::detectNominalFrequency()
                || cpu_model == JAKETOWN 
                || cpu_model == IVYTOWN
                || cpu_model == HASWELLX
+               || cpu_model == BDX_DE
                || cpu_model == IVY_BRIDGE
                || cpu_model == HASWELL
                || cpu_model == BROADWELL
                || original_cpu_model == ATOM_AVOTON
+               || cpu_model == SKL
                ) ? (100000000ULL) : (133333333ULL);
 
         nominal_frequency = ((freq >> 8) & 255) * bus_freq;
@@ -1131,21 +1063,24 @@ bool PCM::detectNominalFrequency()
 
 void PCM::initEnergyMonitoring()
 {
-    if(packageEnergyMetricsAvailable() && MSR)
+    if(packageEnergyMetricsAvailable() && MSR.size())
     {
         uint64 rapl_power_unit = 0;
         MSR[socketRefCore[0]]->read(MSR_RAPL_POWER_UNIT,&rapl_power_unit);
         uint64 energy_status_unit = extract_bits(rapl_power_unit,8,12);
-        joulesPerEnergyUnit = 1./double(1ULL<<energy_status_unit); // (1/2)^energy_status_unit
+        if (original_cpu_model == PCM::ATOM_CHERRYTRAIL || original_cpu_model == PCM::ATOM_BAYTRAIL)
+            joulesPerEnergyUnit = double(1ULL << energy_status_unit)/1000000.; // (2)^energy_status_unit microJoules
+        else
+            joulesPerEnergyUnit = 1./double(1ULL<<energy_status_unit); // (1/2)^energy_status_unit
 	//std::cout << "MSR_RAPL_POWER_UNIT: "<<energy_status_unit<<"; Joules/unit "<< joulesPerEnergyUnit << std::endl;
         uint64 power_unit = extract_bits(rapl_power_unit,0,3);
         double wattsPerPowerUnit = 1./double(1ULL<<power_unit);
 
         uint64 package_power_info = 0;
         MSR[socketRefCore[0]]->read(MSR_PKG_POWER_INFO,&package_power_info);
-        pkgThermalSpecPower = (uint32) (double(extract_bits(package_power_info, 0, 14))*wattsPerPowerUnit);
-        pkgMinimumPower = (uint32) (double(extract_bits(package_power_info, 16, 30))*wattsPerPowerUnit);
-        pkgMaximumPower = (uint32) (double(extract_bits(package_power_info, 32, 46))*wattsPerPowerUnit);
+        pkgThermalSpecPower = (int32) (double(extract_bits(package_power_info, 0, 14))*wattsPerPowerUnit);
+        pkgMinimumPower = (int32) (double(extract_bits(package_power_info, 16, 30))*wattsPerPowerUnit);
+        pkgMaximumPower = (int32) (double(extract_bits(package_power_info, 32, 46))*wattsPerPowerUnit);
 
         std::cerr << "Package thermal spec power: "<< pkgThermalSpecPower << " Watt; ";
         std::cerr << "Package minimum power: "<< pkgMinimumPower << " Watt; ";
@@ -1153,39 +1088,35 @@ void PCM::initEnergyMonitoring()
 
         int i = 0;
 
-        if(snb_energy_status.empty())
-	        for (i = 0; i < num_sockets; ++i)
-		        snb_energy_status.push_back(new CounterWidthExtender(new CounterWidthExtender::MsrHandleCounter(MSR[socketRefCore[i]],MSR_PKG_ENERGY_STATUS)) );
+        if(energy_status.empty())
+	        for (i = 0; i < (int)num_sockets; ++i)
+                energy_status.push_back(
+                    std::shared_ptr<CounterWidthExtender>(
+                        new CounterWidthExtender(new CounterWidthExtender::MsrHandleCounter(MSR[socketRefCore[i]], MSR_PKG_ENERGY_STATUS), 32, 10000)));
 
-        if(dramEnergyMetricsAvailable() && jkt_dram_energy_status.empty())
-            for (i = 0; i < num_sockets; ++i)
-                jkt_dram_energy_status.push_back(new CounterWidthExtender(new CounterWidthExtender::MsrHandleCounter(MSR[socketRefCore[i]],MSR_DRAM_ENERGY_STATUS)));
+        if(dramEnergyMetricsAvailable() && dram_energy_status.empty())
+            for (i = 0; i < (int)num_sockets; ++i)
+                dram_energy_status.push_back(
+                    std::shared_ptr<CounterWidthExtender>(
+                    new CounterWidthExtender(new CounterWidthExtender::MsrHandleCounter(MSR[socketRefCore[i]], MSR_DRAM_ENERGY_STATUS), 32, 10000)));
     }
 }
 
 void PCM::initUncoreObjects()
 {
-    if (hasPCICFGUncore() && MSR != NULL)
+    if (hasPCICFGUncore() && MSR.size())
     {
-        server_pcicfg_uncore = new ServerPCICFGUncore *[num_sockets];
         int i = 0;
-
         try
         {
-            for (i = 0; i < num_sockets; ++i)
+            for (i = 0; i < (int)num_sockets; ++i)
             {
-                server_pcicfg_uncore[i] = new ServerPCICFGUncore(i, this);
+                server_pcicfg_uncore.push_back(std::shared_ptr<ServerPCICFGUncore>(new ServerPCICFGUncore(i, this)));
             }
         }
         catch (...)
         {
-            // failed
-            for (int j = 0; j < i; j++)
-                delete server_pcicfg_uncore[j];
-            delete[] server_pcicfg_uncore;
-
-            server_pcicfg_uncore = NULL;
-
+            server_pcicfg_uncore.clear();
             std::cerr << "Can not access Jaketown/Ivytown PCI configuration space. Access to uncore counters (memory and QPI bandwidth) is disabled." << std::endl;
                 #ifdef _MSC_VER
             std::cerr << "You must have signed msr.sys driver in your current directory and have administrator rights to run this program." << std::endl;
@@ -1196,15 +1127,18 @@ void PCM::initUncoreObjects()
             std::cerr << "You must be root to access these Jaketown/Ivytown counters in PCM. " << std::endl;
                 #endif
         }
-    } else if((cpu_model == SANDY_BRIDGE || cpu_model == IVY_BRIDGE || cpu_model == HASWELL || cpu_model == BROADWELL) && MSR != NULL)
+    } else if((cpu_model == SANDY_BRIDGE || cpu_model == IVY_BRIDGE || cpu_model == HASWELL || cpu_model == BROADWELL || cpu_model == SKL) && MSR.size())
     {
        // initialize memory bandwidth counting
        try
        {
-           clientBW = new ClientBW();
-           clientImcReads = new CounterWidthExtender(new CounterWidthExtender::ClientImcReadsCounter(clientBW));
-           clientImcWrites = new CounterWidthExtender(new CounterWidthExtender::ClientImcWritesCounter(clientBW));
-           clientIoRequests = new CounterWidthExtender(new CounterWidthExtender::ClientIoRequestsCounter(clientBW));
+           clientBW = std::shared_ptr<ClientBW>(new ClientBW());
+           clientImcReads = std::shared_ptr<CounterWidthExtender>(
+               new CounterWidthExtender(new CounterWidthExtender::ClientImcReadsCounter(clientBW), 32, 10000));
+           clientImcWrites = std::shared_ptr<CounterWidthExtender>(
+               new CounterWidthExtender(new CounterWidthExtender::ClientImcWritesCounter(clientBW), 32, 10000));
+           clientIoRequests = std::shared_ptr<CounterWidthExtender>(
+               new CounterWidthExtender(new CounterWidthExtender::ClientIoRequestsCounter(clientBW), 32, 10000));
 
        } catch(...)
        {
@@ -1228,6 +1162,7 @@ void PCM::initUncoreObjects()
             PCU_MSR_PMON_CTRX_ADDR[2] = JKTIVT_PCU_MSR_PMON_CTR2_ADDR;
             PCU_MSR_PMON_CTRX_ADDR[3] = JKTIVT_PCU_MSR_PMON_CTR3_ADDR;
             break;
+        case BDX_DE:
         case HASWELLX:
             PCU_MSR_PMON_BOX_CTL_ADDR = HSX_PCU_MSR_PMON_BOX_CTL_ADDR;
             PCU_MSR_PMON_CTRX_ADDR[0] = HSX_PCU_MSR_PMON_CTR0_ADDR;
@@ -1236,14 +1171,12 @@ void PCM::initUncoreObjects()
             PCU_MSR_PMON_CTRX_ADDR[3] = HSX_PCU_MSR_PMON_CTR3_ADDR;
             break;
         default:
-            PCU_MSR_PMON_BOX_CTL_ADDR = 0;
-            PCU_MSR_PMON_CTRX_ADDR[0] = 0;
-            PCU_MSR_PMON_CTRX_ADDR[1] = 0;
-            PCU_MSR_PMON_CTRX_ADDR[2] = 0;
-            PCU_MSR_PMON_CTRX_ADDR[3] = 0;
+            PCU_MSR_PMON_BOX_CTL_ADDR = (uint64)0;
+            PCU_MSR_PMON_CTRX_ADDR[0] = (uint64)0;
+            PCU_MSR_PMON_CTRX_ADDR[1] = (uint64)0;
+            PCU_MSR_PMON_CTRX_ADDR[2] = (uint64)0;
+            PCU_MSR_PMON_CTRX_ADDR[3] = (uint64)0;
     }
-
-
 }
 
 #ifdef __linux__
@@ -1304,17 +1237,14 @@ PCM::PCM() :
     perfmon_config_anythread(1),
     nominal_frequency(0),
     max_qpi_speed(0),
+    L3ScalingFactor(0),
     pkgThermalSpecPower(-1),
     pkgMinimumPower(-1), 
     pkgMaximumPower(-1),
     allow_multiple_instances(false),
     programmed_pmu(false),
-    MSR(NULL),
-    server_pcicfg_uncore(NULL),
-    clientBW(NULL),
-    clientImcReads(NULL),
-    clientImcWrites(NULL),
-    clientIoRequests(NULL),
+    PCU_MSR_PMON_BOX_CTL_ADDR(0),
+    joulesPerEnergyUnit(0),
     disable_JKT_workaround(false),
     blocked(false),
     coreCStateMsr(NULL),
@@ -1342,13 +1272,13 @@ PCM::PCM() :
     }
 #endif
 
-#ifdef __linux__
-    if(isNMIWatchdogEnabled()) return;
-#endif
-
     if(!detectModel()) return;
 
     if(!checkModel()) return;
+
+#ifdef __linux__
+    if (isNMIWatchdogEnabled()) return;
+#endif
 
     initCStateSupportTables();
 
@@ -1356,7 +1286,7 @@ PCM::PCM() :
 
     printSystemTopology();
 
-    initMSR();
+    if(!initMSR()) return;
 
     if(!detectNominalFrequency()) return;
 
@@ -1364,8 +1294,8 @@ PCM::PCM() :
 
     initUncoreObjects();
 
-    // Initialize L3 Cache Occupancy Monitoring
-    initL3CacheOccupancyMonitoring();
+    // Initialize RMID to the cores for QOS monitoring
+    initRMID();
 
 #ifdef PCM_USE_PERF
     canUsePerf = true;
@@ -1379,7 +1309,7 @@ void PCM::enableJKTWorkaround(bool enable)
     if(disable_JKT_workaround) return;
     std::cerr << "Using PCM on your system might have a performance impact as per http://software.intel.com/en-us/articles/performance-impact-when-sampling-certain-llc-events-on-snb-ep-with-vtune" << std::endl;
     std::cerr << "You can avoid the performance impact by using the option --noJKTWA, however the cache metrics might be wrong then." << std::endl;
-    if(MSR)
+    if(MSR.size())
     {
         for(int32 i = 0; i < num_cores; ++i)
         {
@@ -1392,12 +1322,9 @@ void PCM::enableJKTWorkaround(bool enable)
             MSR[i]->write(0x39C, val64);
         }
     }
-    if(server_pcicfg_uncore)
+    for (size_t i = 0; i < (size_t)server_pcicfg_uncore.size(); ++i)
     {
-        for (int32 i = 0; i < num_sockets; ++i)
-        {
-                if(server_pcicfg_uncore[i]) server_pcicfg_uncore[i]->enableJKTWorkaround(enable);
-        }
+            if(server_pcicfg_uncore[i].get()) server_pcicfg_uncore[i]->enableJKTWorkaround(enable);
     }
 }
 
@@ -1420,17 +1347,28 @@ bool PCM::isCPUModelSupported(int model_)
             || model_ == HASWELL
             || model_ == IVYTOWN
             || model_ == HASWELLX
-            || model_ == BROADWELL
+            || model_ == BDX_DE
+			|| model_ == BROADWELL
+            || model_ == SKL
            );
 }
 
 bool PCM::checkModel()
 {
     if (cpu_model == NEHALEM) cpu_model = NEHALEM_EP;
-    if (cpu_model == ATOM_2 || cpu_model == ATOM_CENTERTON || cpu_model == ATOM_BAYTRAIL || cpu_model == ATOM_AVOTON) cpu_model = ATOM;
+    if (   cpu_model == ATOM_2
+        || cpu_model == ATOM_CENTERTON
+        || cpu_model == ATOM_BAYTRAIL
+        || cpu_model == ATOM_AVOTON
+        || cpu_model == ATOM_CHERRYTRAIL
+        ) {
+        cpu_model = ATOM;
+    }
     if (cpu_model == HASWELL_ULT || cpu_model == HASWELL_2) cpu_model = HASWELL;
+    if (cpu_model == BROADWELL_XEON_E3) cpu_model = BROADWELL;
+    if (cpu_model == SKL_UY) cpu_model = SKL;
 
-    if(!isCPUModelSupported(cpu_model))
+    if(!isCPUModelSupported((int)cpu_model))
     {
         std::cerr << getUnsupportedMessage() << " CPU model number: " << cpu_model << " Brand: \"" << getCPUBrandString().c_str() <<"\""<< std::endl;
 /* FOR TESTING PURPOSES ONLY */
@@ -1446,13 +1384,7 @@ bool PCM::checkModel()
 
 void PCM::destroyMSR()
 {
-        if (MSR)
-        {
-            for (int i = 0; i < num_cores; ++i)
-                if (MSR[i]) delete MSR[i];
-            delete[] MSR;
-            MSR = NULL;
-        }
+    MSR.clear();
 }
 
 PCM::~PCM()
@@ -1461,65 +1393,14 @@ PCM::~PCM()
     if (instance)
     {
         destroyMSR();
-
-        if (server_pcicfg_uncore)
-        {
-            for (int i = 0; i < num_sockets; ++i)
-                if (server_pcicfg_uncore[i]) delete server_pcicfg_uncore[i];
-            delete[] server_pcicfg_uncore;
-        }
-	for (uint32 i = 0; i < snb_energy_status.size(); ++i)
-	{
-	    delete  snb_energy_status[i];
-	}
-        for (uint32 i = 0; i < jkt_dram_energy_status.size(); ++i)
-            delete jkt_dram_energy_status[i];
-	
         instance = NULL;
-        
-        if(clientImcReads) delete clientImcReads;
-        clientImcReads = NULL;
-        if(clientImcWrites) delete clientImcWrites;
-        clientImcWrites = NULL;
-        if(clientIoRequests) delete clientIoRequests;
-        clientIoRequests = NULL;
-        if(clientBW) delete clientBW;
-        clientBW = NULL;
     }
 }
 
 bool PCM::good()
 {
-    return MSR != NULL;
+    return !MSR.empty();
 }
-
-class TemporalThreadAffinity  // speedup trick for Linux
-{
-#ifdef __linux__
-    cpu_set_t old_affinity;
-    TemporalThreadAffinity(); // forbiden
-
-public:
-    TemporalThreadAffinity(uint32 core_id)
-    {
-        pthread_getaffinity_np(pthread_self(), sizeof(cpu_set_t), &old_affinity);
-
-        cpu_set_t new_affinity;
-        CPU_ZERO(&new_affinity);
-        CPU_SET(core_id, &new_affinity);
-        pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &new_affinity);
-    }
-    ~TemporalThreadAffinity()
-    {
-        pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &old_affinity);
-    }
-#else // not implemented for windows or os x
-    TemporalThreadAffinity(); // forbiden
-
-public:
-    TemporalThreadAffinity(uint32) { }
-#endif
-};
 
 #ifdef PCM_USE_PERF
 perf_event_attr PCM_init_perf_event_attr()
@@ -1562,7 +1443,7 @@ PCM::ErrorCode PCM::program(const PCM::ProgramMode mode_, const void * parameter
     }
 
     InstanceLock lock(allow_multiple_instances);
-    if (!MSR) return PCM::MSRAccessDenied;
+    if (MSR.empty()) return PCM::MSRAccessDenied;
     
     ExtendedCustomCoreEventDescription * pExtDesc = (ExtendedCustomCoreEventDescription *)parameter_;
 
@@ -1594,22 +1475,29 @@ PCM::ErrorCode PCM::program(const PCM::ProgramMode mode_, const void * parameter
         if (!numInstancesSemaphore)
         {
             _com_error error(GetLastError());
-            std::wcerr << "Error in Windows function 'CreateSemaphore': " << GetLastError() << " " << error.ErrorMessage() << std::endl;
+            std::wcerr << "Error in Windows function 'CreateSemaphore': " << GetLastError() << " ";
+            const TCHAR * strError = _com_error(GetLastError()).ErrorMessage();
+            if (strError) std::wcerr << strError;
+            std::wcerr << std::endl;
             return PCM::UnknownError;
         }
         LONG prevValue = 0;
         if (!ReleaseSemaphore(numInstancesSemaphore, 1, &prevValue))
         {
             _com_error error(GetLastError());
-            std::wcerr << "Error in Windows function 'ReleaseSemaphore': " << GetLastError() << " " << error.ErrorMessage() << std::endl;
+            std::wcerr << "Error in Windows function 'ReleaseSemaphore': " << GetLastError() << " ";
+            const TCHAR * strError = _com_error(GetLastError()).ErrorMessage();
+            if (strError) std::wcerr << strError;
+            std::wcerr << std::endl;
             return PCM::UnknownError;
         }
         if (prevValue > 0)  // already programmed since another instance exists
         {
             std::cerr << "Number of PCM instances: " << (prevValue + 1) << std::endl;
-            if (hasPCICFGUncore() && server_pcicfg_uncore && server_pcicfg_uncore[0] && max_qpi_speed==0)
-               for (int i = 0; i < num_sockets; ++i)
-                  max_qpi_speed = (std::max)(server_pcicfg_uncore[i]->computeQPISpeed(socketRefCore[i],cpu_model), max_qpi_speed); // parenthesis to avoid macro expansion on Windows
+            if (hasPCICFGUncore() && max_qpi_speed==0)
+            for (size_t i = 0; i < (size_t)server_pcicfg_uncore.size(); ++i)
+                if (server_pcicfg_uncore[i].get()) 
+                    max_qpi_speed = (std::max)(server_pcicfg_uncore[i]->computeQPISpeed(socketRefCore[i], cpu_model), max_qpi_speed); // parenthesis to avoid macro expansion on Windows
 
             reportQPISpeed();
             return PCM::Success;
@@ -1635,10 +1523,11 @@ PCM::ErrorCode PCM::program(const PCM::ProgramMode mode_, const void * parameter
         if (curValue > 1)  // already programmed since another instance exists
         {
             std::cerr << "Number of PCM instances: " << curValue << std::endl;
-            if (hasPCICFGUncore() && server_pcicfg_uncore && server_pcicfg_uncore[0] && max_qpi_speed==0)
-			    for (int i = 0; i < num_sockets; ++i) {
+            if (hasPCICFGUncore() && max_qpi_speed==0)
+            for (int i = 0; i < (int)server_pcicfg_uncore.size(); ++i) {
+                if(server_pcicfg_uncore[i].get())
                     max_qpi_speed = std::max(server_pcicfg_uncore[i]->computeQPISpeed(socketRefCore[i],cpu_model), max_qpi_speed);
-		    reportQPISpeed();
+		        reportQPISpeed();
             }
             if(!canUsePerf) return PCM::Success;
         }
@@ -1711,8 +1600,20 @@ PCM::ErrorCode PCM::program(const PCM::ProgramMode mode_, const void * parameter
             coreEventDesc[1].event_number = ARCH_LLC_REFERENCE_EVTNR;
             coreEventDesc[1].umask_value = ARCH_LLC_REFERENCE_UMASK;
             core_gen_counter_num_used = 2;
-        }
-        else if (
+
+        } else if ( SKL == cpu_model )
+        {
+            coreEventDesc[0].event_number = SKL_MEM_LOAD_RETIRED_L3_MISS_EVTNR;
+            coreEventDesc[0].umask_value = SKL_MEM_LOAD_RETIRED_L3_MISS_UMASK;
+            coreEventDesc[1].event_number = SKL_MEM_LOAD_RETIRED_L3_HIT_EVTNR;
+            coreEventDesc[1].umask_value = SKL_MEM_LOAD_RETIRED_L3_HIT_UMASK;
+            coreEventDesc[2].event_number = SKL_MEM_LOAD_RETIRED_L2_MISS_EVTNR;
+            coreEventDesc[2].umask_value = SKL_MEM_LOAD_RETIRED_L2_MISS_UMASK;
+            coreEventDesc[3].event_number = SKL_MEM_LOAD_RETIRED_L2_HIT_EVTNR;
+            coreEventDesc[3].umask_value = SKL_MEM_LOAD_RETIRED_L2_HIT_UMASK;
+            core_gen_counter_num_used = 4;
+
+        } else if (
                SANDY_BRIDGE == cpu_model 
             || JAKETOWN == cpu_model 
             || IVYTOWN == cpu_model
@@ -1720,6 +1621,7 @@ PCM::ErrorCode PCM::program(const PCM::ProgramMode mode_, const void * parameter
             || HASWELL == cpu_model
             || HASWELLX == cpu_model
             || BROADWELL == cpu_model
+            || BDX_DE == cpu_model
                 )
         {
             coreEventDesc[0].event_number = ARCH_LLC_MISS_EVTNR;
@@ -1779,7 +1681,7 @@ PCM::ErrorCode PCM::program(const PCM::ProgramMode mode_, const void * parameter
     programmed_pmu = true;
 
     // Version for linux/windows
-    for (int i = 0; i < num_cores; ++i)
+    for (int i = 0; i < (int)num_cores; ++i)
     {
         // program core counters
 
@@ -1937,9 +1839,9 @@ PCM::ErrorCode PCM::program(const PCM::ProgramMode mode_, const void * parameter
       std::cerr << "Successfully programmed on-core PMU using Linux perf"<<std::endl;
     }
 
-    if (hasPCICFGUncore() && server_pcicfg_uncore)
+    if (hasPCICFGUncore())
     {
-        for (int i = 0; i < num_sockets; ++i)
+        for (size_t i = 0; i < (size_t)server_pcicfg_uncore.size(); ++i)
         {
             server_pcicfg_uncore[i]->program();
             max_qpi_speed = (std::max)(server_pcicfg_uncore[i]->computeQPISpeed(socketRefCore[i],cpu_model), max_qpi_speed); // parenthesis to avoid macro expansion on Windows
@@ -1955,14 +1857,14 @@ void PCM::reportQPISpeed() const
 {
     if (!max_qpi_speed) return;
  
-    if (hasPCICFGUncore() && server_pcicfg_uncore && server_pcicfg_uncore[0]) {
-       for (int i = 0; i < num_sockets; ++i)
+    if (hasPCICFGUncore()) {
+        for (size_t i = 0; i < (size_t)server_pcicfg_uncore.size(); ++i)
        {
           std::cerr << "Socket " << i << std::endl;
-          server_pcicfg_uncore[i]->reportQPISpeed();
+          if(server_pcicfg_uncore[i].get()) server_pcicfg_uncore[i]->reportQPISpeed();
        }
     } else {
-          std::cerr << "Max QPI speed: " << max_qpi_speed / (1e9) << " GBytes/second (" << max_qpi_speed / (2e9) << " GT/second)" << std::endl;
+          std::cerr << "Max QPI speed: " << max_qpi_speed / (1e9) << " GBytes/second (" << max_qpi_speed / (1e9*double(DATA_BYTES_PER_QPI_CYCLE)) << " GT/second)" << std::endl;
     }
 
 }
@@ -2059,7 +1961,7 @@ void PCM::programNehalemEPUncore(int32 core)
 void PCM::programBecktonUncore(int32 core)
 {
             // program Beckton uncore
-            if (core == socketRefCore[0]) computeQPISpeedBeckton(core);
+            if (core == socketRefCore[0]) computeQPISpeedBeckton((int)core);
 
             uint64 value = 1 << 29ULL;           // reset all counters
             MSR[core]->write(U_MSR_PMON_GLOBAL_CTL, value);
@@ -2175,7 +2077,7 @@ void PCM::computeNominalFrequency()
 }
 std::string PCM::getCPUBrandString()
 {
-	char buffer[sizeof(int)*4*3+1];
+	    char buffer[sizeof(int)*4*3+1];
         PCM_CPUID_INFO * info = (PCM_CPUID_INFO *) buffer;
         pcm_cpuid(0x80000002, *info);
         ++info;
@@ -2185,21 +2087,34 @@ std::string PCM::getCPUBrandString()
         buffer[sizeof(int)*4*3] = 0;
         std::string result(buffer);
         while(result[0]==' ') result.erase(0,1);
-        size_t i = std::string::npos;
-        while((i=result.find("  "))!=std::string::npos) result.replace(i,2," "); // remove duplicate spaces
+        std::string::size_type i;
+        while((i = result.find("  ")) != std::string::npos) result.replace(i,2," "); // remove duplicate spaces
         return result;
+}
+
+std::string PCM::getCPUFamilyModelString()
+{
+	char buffer[sizeof(int)*4*3+6];
+	memset(buffer,0,sizeof(buffer));
+#ifdef _MSC_VER
+	sprintf_s(buffer,sizeof(buffer),"GenuineIntel-%d-%2X",this->cpu_family,this->original_cpu_model);
+#else
+	snprintf(buffer,sizeof(buffer),"GenuineIntel-%d-%2X",this->cpu_family,this->original_cpu_model);
+#endif
+	std::string result(buffer);
+	return result;
 }
 
 uint64 get_frequency_from_cpuid() // from Pat Fay (Intel)
 {
                 double speed=0;
                 std::string brand = PCM::getCPUBrandString();
-                if(brand.length() > 0)
+                if (brand.length() > std::string::size_type(0))
                 {
-                                size_t unitsg = brand.find("GHz");
+                                std::string::size_type unitsg = brand.find("GHz");
                                 if(unitsg != std::string::npos)
                                 {
-                                        size_t atsign = brand.rfind(' ', unitsg);
+                                        std::string::size_type atsign = brand.rfind(' ', unitsg);
                                         if(atsign != std::string::npos)
                                         {
                                                 std::istringstream(brand.substr(atsign)) >> speed;
@@ -2208,10 +2123,10 @@ uint64 get_frequency_from_cpuid() // from Pat Fay (Intel)
                                 }
                                 else
                                 {
-	                                size_t unitsg = brand.find("MHz");
+                                    std::string::size_type unitsg = brand.find("MHz");
 		                            if(unitsg != std::string::npos)
 			                        {
-				                            size_t atsign = brand.rfind(' ', unitsg);
+                                            std::string::size_type atsign = brand.rfind(' ', unitsg);
 					                        if(atsign != std::string::npos)
 						                    {
 								                    std::istringstream(brand.substr(atsign)) >> speed;
@@ -2219,23 +2134,23 @@ uint64 get_frequency_from_cpuid() // from Pat Fay (Intel)
 									}
                                 }
                 }
-                return (uint64)speed * 1000ULL * 1000ULL;
+                return (uint64)(speed * 1000. * 1000.);
 }
 
 std::string PCM::getSupportedUarchCodenames() const
 {
     std::ostringstream ostr;
-    for(int32 i=0; i < PCM::END_OF_MODEL_LIST ; ++i)
-        if(isCPUModelSupported(i))
+    for(int32 i=0; i < static_cast<int32>(PCM::END_OF_MODEL_LIST) ; ++i)
+        if(isCPUModelSupported((int)i))
             ostr << getUArchCodename(i) << ", ";
-    return ostr.str().substr(0, ostr.str().length() - 2);
+    return std::string(ostr.str().substr(0, ostr.str().length() - 2));
 }
 
 std::string PCM::getUnsupportedMessage() const
 {
     std::ostringstream ostr;
     ostr << "Error: unsupported processor. Only Intel(R) processors are supported (Atom(R) and microarchitecture codename "<< getSupportedUarchCodenames() <<").";
-    return ostr.str();
+    return std::string(ostr.str());
 }
 
 void PCM::computeQPISpeedBeckton(int core_nr)
@@ -2261,11 +2176,11 @@ void PCM::computeQPISpeedBeckton(int core_nr)
     MSR[core_nr]->read(R_MSR_PMON_CTR0, &startFlits);
 
     const uint64 timerGranularity = 1000000ULL; // mks
-    uint64 startTSC = getTickCount(timerGranularity, core_nr);
+    uint64 startTSC = getTickCount(timerGranularity, (uint32) core_nr);
     uint64 endTSC;
     do
     {
-        endTSC = getTickCount(timerGranularity, core_nr);
+        endTSC = getTickCount(timerGranularity, (uint32) core_nr);
     } while (endTSC - startTSC < 200000ULL); // spin for 200 ms
 
     uint64 endFlits = 0;
@@ -2277,7 +2192,7 @@ void PCM::computeQPISpeedBeckton(int core_nr)
 bool PCM::PMUinUse()
 {
     // follow the "Performance Monitoring Unit Sharing Guide" by P. Irelan and Sh. Kuo
-    for (int i = 0; i < num_cores; ++i)
+    for (int i = 0; i < (int)num_cores; ++i)
     {
         //std::cout << "Core "<<i<<" exemine registers"<< std::endl;
         uint64 value;
@@ -2351,12 +2266,16 @@ const char * PCM::getUArchCodename(int32 cpu_model_) const
             return "Ivy Bridge-EP/EN/EX/Ivytown";
         case HASWELLX:
             return "Haswell-EP/EN/EX";
+        case BDX_DE:
+            return "Broadwell-DE";
         case IVY_BRIDGE:
             return "Ivy Bridge";
         case HASWELL:
             return "Haswell";
         case BROADWELL:
             return "Broadwell";
+        case SKL:
+            return "Skylake";
     }
     return "unknown";
 }
@@ -2375,7 +2294,7 @@ void PCM::cleanupPMU()
 #endif    
 
     // follow the "Performance Monitoring Unit Sharing Guide" by P. Irelan and Sh. Kuo
-    for (int i = 0; i < num_cores; ++i)
+    for (int i = 0; i < (int)num_cores; ++i)
     {
         // disable generic counters and continue free running counting for fixed counters
         MSR[i]->write(IA32_CR_PERF_GLOBAL_CTRL, (1ULL << 32) + (1ULL << 33) + (1ULL << 34));
@@ -2394,7 +2313,7 @@ void PCM::cleanupPMU()
 
 void PCM::resetPMU()
 {
-    for (int i = 0; i < num_cores; ++i)
+    for (int i = 0; i < (int)num_cores; ++i)
     {
         // disable all counters
         MSR[i]->write(IA32_CR_PERF_GLOBAL_CTRL, 0);
@@ -2426,6 +2345,10 @@ void PCM::resetPMU()
 }
 void PCM::freeRMID()
 {
+    if(!(QOSMetricAvailable()&L3QOSMetricAvailable())) {
+	return;
+    }
+
 	for(int32 core = 0; core < num_cores; core ++ )
 	{
                 if(!isCoreOnline(core)) continue;
@@ -2453,6 +2376,7 @@ void PCM::freeRMID()
 
 	std::cerr << " Freeing up all RMIDs" << std::endl;
 }
+
 void PCM::setOutput(const std::string filename)
 {
      outfile = new std::ofstream(filename.c_str());
@@ -2475,7 +2399,7 @@ void PCM::cleanup()
 {
     InstanceLock lock(allow_multiple_instances);
     
-    if (!MSR) return;
+    if (MSR.empty()) return;
     
     std::cerr << "Cleaning up" << std::endl;
 
@@ -2483,6 +2407,26 @@ void PCM::cleanup()
         cleanupPMU();
 
     freeRMID();
+}
+
+// hle is only available when cpuid has this:
+// HLE: CPUID.07H.EBX.HLE [bit 4]  = 1
+bool PCM::supportsHLE() const
+{
+    PCM_CPUID_INFO info;
+    pcm_cpuid(7, 0, info); // leaf 7, subleaf 0
+
+   return (info.reg.ebx & (0x1 << 4)) ? true : false;
+}
+
+// rtm is only available when cpuid has this:
+// RTM: CPUID.07H.EBX.RTM [bit 11] = 1
+bool PCM::supportsRTM() const
+{
+    PCM_CPUID_INFO info;
+    pcm_cpuid(7, 0, info); // leaf 7, subleaf 0
+
+    return (info.reg.ebx & (0x1 << 11)) ? true : false;
 }
 
 #ifdef __APPLE__
@@ -2614,7 +2558,7 @@ uint64 RDTSC()
 #ifdef _MSC_VER
         // Windows
         #if _MSC_VER>= 1600
-        result = __rdtsc();
+        result = static_cast<uint64>(__rdtsc());
         #endif
 #else
         // Linux
@@ -2700,7 +2644,7 @@ void PCM::readPerfData(uint32 core, std::vector<uint64> & outData)
 }
 #endif
 
-void BasicCounterState::readAndAggregate(SafeMsrHandle * msr)
+void BasicCounterState::readAndAggregate(std::shared_ptr<SafeMsrHandle> msr)
 {
     uint64 cInstRetiredAny = 0, cCpuClkUnhaltedThread = 0, cCpuClkUnhaltedRef = 0;
     uint64 cL3Miss = 0;
@@ -2710,9 +2654,10 @@ void BasicCounterState::readAndAggregate(SafeMsrHandle * msr)
     uint64 cInvariantTSC = 0;
     uint64 cL3Occupancy = 0;
     uint64 cCStateResidency[PCM::MAX_C_STATE + 1];
-    memset(&(cCStateResidency[0]), 0, sizeof(cCStateResidency));
+    memset(cCStateResidency, 0, sizeof(cCStateResidency));
     uint64 thermStatus = 0;
-    TemporalThreadAffinity tempThreadAffinity(msr->getCoreId()); // speedup trick for Linux
+    const int32 core_id = msr->getCoreId();
+    TemporalThreadAffinity tempThreadAffinity(core_id); // speedup trick for Linux
 
     PCM * m = PCM::getInstance();
     uint32 cpu_model = m->getCPUModel();
@@ -2748,9 +2693,11 @@ void BasicCounterState::readAndAggregate(SafeMsrHandle * msr)
     case PCM::JAKETOWN:
     case PCM::IVYTOWN:
     case PCM::HASWELLX:
+    case PCM::BDX_DE:
  	case PCM::IVY_BRIDGE:
     case PCM::HASWELL:
     case PCM::BROADWELL:
+    case PCM::SKL:
         msr->read(IA32_PMC0, &cL3Miss);
         msr->read(IA32_PMC1, &cL3UnsharedHit);
         msr->read(IA32_PMC2, &cL2HitM);
@@ -2765,13 +2712,22 @@ void BasicCounterState::readAndAggregate(SafeMsrHandle * msr)
 
     // std::cout << "DEBUG1: "<< msr->getCoreId() << " " << cInstRetiredAny<< " "<< std::endl;
     if(m->L3CacheOccupancyMetricAvailable())
-     	msr->read(IA32_QM_CTR,&cL3Occupancy);
+    {
+    	msr->lock();
+    	uint64 event = 1;
+        m->initQOSevent(event, core_id);
+    	msr->read(IA32_QM_CTR,&cL3Occupancy);
+        //std::cout << "readAndAggregate reading IA32_QM_CTR "<< std::dec << cL3Occupancy << std::dec << std::endl;
+    	msr->unlock();
+    }
+
+    m->readAndAggregateMemoryBWCounters(static_cast<uint32>(core_id), *this);
 
     if(cpu_model != PCM::ATOM ||  m->getOriginalCPUModel() == PCM::ATOM_AVOTON) msr->read(IA32_TIME_STAMP_COUNTER, &cInvariantTSC);
     else
     {
 #ifdef _MSC_VER
-        cInvariantTSC = ((uint64)(GetTickCount()/1000))*m->getNominalFrequency();
+        cInvariantTSC = ((static_cast<uint64>(GetTickCount()/1000ULL)))*m->getNominalFrequency();
 #else
         struct timeval tp;
         gettimeofday(&tp, NULL);
@@ -2780,7 +2736,7 @@ void BasicCounterState::readAndAggregate(SafeMsrHandle * msr)
     }
 
     // reading core C state counters
-    for(int i=0; i <= PCM::MAX_C_STATE ;++i)
+    for(int i=0; i <= (int)(PCM::MAX_C_STATE) ;++i)
         if(m->coreCStateMsr && m->coreCStateMsr[i])
                 msr->read(m->coreCStateMsr[i], &(cCStateResidency[i]));
 
@@ -2793,19 +2749,31 @@ void BasicCounterState::readAndAggregate(SafeMsrHandle * msr)
     L3Miss += m->extractCoreGenCounterValue(cL3Miss);
     L3UnsharedHit += m->extractCoreGenCounterValue(cL3UnsharedHit);
     //std::cout << "Scaling Factor " << m->L3ScalingFactor;
-    cL3Occupancy = m->extractL3CacheOccupancy(cL3Occupancy);
-    L3Occupancy = (cL3Occupancy==PCM_INVALID_L3_CACHE_OCCUPANCY)? PCM_INVALID_L3_CACHE_OCCUPANCY : (uint64)((double)(cL3Occupancy * m->L3ScalingFactor) / 1024.0);
+    cL3Occupancy = m->extractQOSMonitoring(cL3Occupancy);
+    L3Occupancy = (cL3Occupancy==PCM_INVALID_QOS_MONITORING_DATA)? PCM_INVALID_QOS_MONITORING_DATA : (uint64)((double)(cL3Occupancy * m->L3ScalingFactor) / 1024.0);
     L2HitM += m->extractCoreGenCounterValue(cL2HitM);
     L2Hit += m->extractCoreGenCounterValue(cL2Hit);
     InvariantTSC += cInvariantTSC;
-    for(int i=0; i <= PCM::MAX_C_STATE ;++i)
+    for(int i=0; i <= int(PCM::MAX_C_STATE);++i)
         CStateResidency[i] += cCStateResidency[i];
     ThermalHeadroom = extractThermalHeadroom(thermStatus);
 }
 
+PCM::ErrorCode PCM::programServerUncoreMemoryMetrics(int rankA, int rankB)
+{
+    if(MSR.empty() || server_pcicfg_uncore.empty())  return PCM::MSRAccessDenied;
+
+    for (int i = 0; (i < (int)server_pcicfg_uncore.size()) && MSR.size(); ++i)
+    {
+        server_pcicfg_uncore[i]->programServerUncoreMemoryMetrics(rankA, rankB);
+    }
+
+    return PCM::Success;
+}
+
 PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_profile, int * freq_bands)
 {
-    if(MSR == NULL || server_pcicfg_uncore == NULL)  return PCM::MSRAccessDenied;
+    if(MSR.empty() || server_pcicfg_uncore.empty())  return PCM::MSRAccessDenied;
 
 	uint32 PCUCntConf[4] = {0,0,0,0};
 
@@ -2847,7 +2815,7 @@ PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_prof
          {
              PCUCntConf[1] =  PCU_MSR_PMON_CTL_EVENT(0x60) + PCU_MSR_PMON_CTL_EDGE_DET ; // number of frequency transitions
              PCUCntConf[2] =  PCU_MSR_PMON_CTL_EVENT(0x60) ; // cycles spent changing frequency: FREQ_TRANS_CYCLES
-         } else if (HASWELLX == cpu_model )
+         } else if (HASWELLX == cpu_model || BDX_DE == cpu_model)
          {
              PCUCntConf[1] =  PCU_MSR_PMON_CTL_EVENT(0x74) + PCU_MSR_PMON_CTL_EDGE_DET ; // number of frequency transitions
              PCUCntConf[2] =  PCU_MSR_PMON_CTL_EVENT(0x74) ; // cycles spent changing frequency: FREQ_TRANS_CYCLES
@@ -2863,7 +2831,7 @@ PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_prof
          {
              PCUCntConf[2] =  PCU_MSR_PMON_CTL_EVENT(0x2B) + PCU_MSR_PMON_CTL_EDGE_DET ; // PC2 transitions
              PCUCntConf[3] =  PCU_MSR_PMON_CTL_EVENT(0x2D) + PCU_MSR_PMON_CTL_EDGE_DET ; // PC6 transitions
-         } else if (HASWELLX == cpu_model )
+         } else if (HASWELLX == cpu_model || BDX_DE == cpu_model)
          {
              PCUCntConf[0] =  PCU_MSR_PMON_CTL_EVENT(0x4E)                             ; // PC1e residencys
              PCUCntConf[1] =  PCU_MSR_PMON_CTL_EVENT(0x4E) + PCU_MSR_PMON_CTL_EDGE_DET ; // PC1 transitions
@@ -2875,7 +2843,7 @@ PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_prof
          }
          break;
      case 7:
-         if (HASWELLX == cpu_model )
+         if (HASWELLX == cpu_model || BDX_DE == cpu_model)
          {
              PCUCntConf[0] =  PCU_MSR_PMON_CTL_EVENT(0x7E) ; // UFS_TRANSITIONS_PERF_P_LIMIT
              PCUCntConf[1] =  PCU_MSR_PMON_CTL_EVENT(0x7D) ; // UFS_TRANSITIONS_IO_P_LIMIT
@@ -2887,7 +2855,7 @@ PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_prof
          }
          break;
     case 8:
-         if (HASWELLX == cpu_model )
+         if (HASWELLX == cpu_model || BDX_DE == cpu_model)
          {
              PCUCntConf[0] =  PCU_MSR_PMON_CTL_EVENT(0x7C) ; // UFS_TRANSITIONS_DOWN
          } else
@@ -2899,7 +2867,7 @@ PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_prof
          std::cerr << "ERROR: unsupported PCU profile "<< pcu_profile << std::endl;
     }
 
-	uint32 PCU_MSR_PMON_BOX_FILTER_ADDR, PCU_MSR_PMON_CTLX_ADDR[4] = { 0, 0, 0, 0 };
+	uint64 PCU_MSR_PMON_BOX_FILTER_ADDR, PCU_MSR_PMON_CTLX_ADDR[4] = { 0, 0, 0, 0 };
 
     switch(cpu_model)
     {
@@ -2912,6 +2880,7 @@ PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_prof
             PCU_MSR_PMON_CTLX_ADDR[3] = JKTIVT_PCU_MSR_PMON_CTL3_ADDR;
             break;
         case HASWELLX:
+        case BDX_DE:
             PCU_MSR_PMON_BOX_FILTER_ADDR = HSX_PCU_MSR_PMON_BOX_FILTER_ADDR;
             PCU_MSR_PMON_CTLX_ADDR[0] = HSX_PCU_MSR_PMON_CTL0_ADDR;
             PCU_MSR_PMON_CTLX_ADDR[1] = HSX_PCU_MSR_PMON_CTL1_ADDR;
@@ -2923,7 +2892,7 @@ PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_prof
             return PCM::UnknownError;
     }
 
-    for (int i = 0; (i < num_sockets) && server_pcicfg_uncore && MSR; ++i)
+    for (int i = 0; (i < (int)server_pcicfg_uncore.size()) && MSR.size(); ++i)
     {
       server_pcicfg_uncore[i]->program_power_metrics(mc_profile);
 
@@ -2973,7 +2942,7 @@ PCM::ErrorCode PCM::programServerUncorePowerMetrics(int mc_profile, int pcu_prof
 
 void PCM::freezeServerUncoreCounters()
 {
-	for (int i = 0; (i < num_sockets) && server_pcicfg_uncore && MSR; ++i)
+    for (int i = 0; (i < (int)server_pcicfg_uncore.size()) && MSR.size(); ++i)
     {
       server_pcicfg_uncore[i]->freezeCounters();
 	  MSR[socketRefCore[i]]->write(PCU_MSR_PMON_BOX_CTL_ADDR, PCU_MSR_PMON_BOX_CTL_FRZ_EN + PCU_MSR_PMON_BOX_CTL_FRZ);
@@ -2981,13 +2950,13 @@ void PCM::freezeServerUncoreCounters()
 }
 void PCM::unfreezeServerUncoreCounters()
 {
-	for (int i = 0; (i < num_sockets) && server_pcicfg_uncore && MSR; ++i)
+    for (int i = 0; (i < (int)server_pcicfg_uncore.size()) && MSR.size(); ++i)
     {
       server_pcicfg_uncore[i]->unfreezeCounters();
 	  MSR[socketRefCore[i]]->write(PCU_MSR_PMON_BOX_CTL_ADDR, PCU_MSR_PMON_BOX_CTL_FRZ_EN);
 	}
 }
-void UncoreCounterState::readAndAggregate(SafeMsrHandle * msr)
+void UncoreCounterState::readAndAggregate(std::shared_ptr<SafeMsrHandle> msr)
 {
     TemporalThreadAffinity tempThreadAffinity(msr->getCoreId()); // speedup trick for Linux
 
@@ -2998,13 +2967,13 @@ void UncoreCounterState::readAndAggregate(SafeMsrHandle * msr)
 SystemCounterState PCM::getSystemCounterState()
 {
     SystemCounterState result;
-    if (MSR)
+    if (MSR.size())
     {
         // read core and uncore counter state
         for (int32 core = 0; core < num_cores; ++core)
             result.readAndAggregate(MSR[core]);
 
-        for (int32 s=0; s < num_sockets; s++)
+        for (uint32 s = 0; s < (uint32)num_sockets; s++)
         {
             readAndAggregateUncoreMCCounters(s, result);
             readAndAggregateEnergyCounters(s, result);
@@ -3012,9 +2981,38 @@ SystemCounterState PCM::getSystemCounterState()
 
         readQPICounters(result);
 
-        result.ThermalHeadroom = PCM_INVALID_THERMAL_HEADROOM; // not available for system
+        result.ThermalHeadroom = static_cast<int32>(PCM_INVALID_THERMAL_HEADROOM); // not available for system
     }
     return result;
+}
+
+template <class CounterStateType>
+void PCM::readAndAggregateMemoryBWCounters(const uint32 core, CounterStateType & result)
+{
+	 uint64 cMemoryBWLocal = 0;
+	 uint64 cMemoryBWTotal = 0;
+
+	 if(core < memory_bw_local.size())
+	 {
+		 cMemoryBWLocal = memory_bw_local[core]->read();
+		 cMemoryBWLocal = extractQOSMonitoring(cMemoryBWLocal);
+                 //std::cout << "Read MemoryBWLocal "<< cMemoryBWLocal << std::endl;
+                 if(cMemoryBWLocal==PCM_INVALID_QOS_MONITORING_DATA)
+                     result.MemoryBWLocal = PCM_INVALID_QOS_MONITORING_DATA; // do not accumulate invalid reading
+                 else
+		     result.MemoryBWLocal += (uint64)((double)(cMemoryBWLocal * L3ScalingFactor) / (1024.0 * 1024.0));
+	 }
+	 if(core < memory_bw_total.size())
+	 {
+		 cMemoryBWTotal = memory_bw_total[core]->read();
+		 cMemoryBWTotal = extractQOSMonitoring(cMemoryBWTotal);
+                 //std::cout << "Read MemoryBWTotal "<< cMemoryBWTotal << std::endl;
+                 if(cMemoryBWTotal==PCM_INVALID_QOS_MONITORING_DATA)
+                     result.MemoryBWTotal = PCM_INVALID_QOS_MONITORING_DATA; // do not accumulate invalid reading
+                 else
+                     result.MemoryBWTotal  += (uint64)((double)(cMemoryBWTotal * L3ScalingFactor) / (1024.0 * 1024.0));
+	 }
+
 }
 
 template <class CounterStateType>
@@ -3022,7 +3020,7 @@ void PCM::readAndAggregateUncoreMCCounters(const uint32 socket, CounterStateType
 {
     if (hasPCICFGUncore())
     {
-        if (server_pcicfg_uncore)
+        if (server_pcicfg_uncore.size() && server_pcicfg_uncore[socket].get())
         {
             server_pcicfg_uncore[socket]->freezeCounters();
             result.UncMCNormalReads += server_pcicfg_uncore[socket]->getImcReads();
@@ -3030,7 +3028,7 @@ void PCM::readAndAggregateUncoreMCCounters(const uint32 socket, CounterStateType
             server_pcicfg_uncore[socket]->unfreezeCounters();
         }
     }
-    else if(clientBW && socket == 0)
+    else if(clientBW.get() && socket == 0)
     {
         result.UncMCNormalReads += clientImcReads->read();
         result.UncMCFullWrites += clientImcWrites->read();
@@ -3038,7 +3036,7 @@ void PCM::readAndAggregateUncoreMCCounters(const uint32 socket, CounterStateType
     }
     else
     {
-        SafeMsrHandle * msr = MSR[socketRefCore[socket]];
+        std::shared_ptr<SafeMsrHandle> msr = MSR[socketRefCore[socket]];
         TemporalThreadAffinity tempThreadAffinity(socketRefCore[socket]); // speedup trick for Linux
         switch (cpu_model)
         {
@@ -3078,30 +3076,27 @@ void PCM::readAndAggregateUncoreMCCounters(const uint32 socket, CounterStateType
 template <class CounterStateType>
 void PCM::readAndAggregateEnergyCounters(const uint32 socket, CounterStateType & result)
 {
-    if(socket < snb_energy_status.size())
-        result.PackageEnergyStatus += snb_energy_status[socket]->read();
+    if(socket < (uint32)energy_status.size())
+        result.PackageEnergyStatus += energy_status[socket]->read();
 
-    if(socket < jkt_dram_energy_status.size())
-        result.DRAMEnergyStatus += jkt_dram_energy_status[socket]->read();
+    if (socket < (uint32)dram_energy_status.size())
+        result.DRAMEnergyStatus += dram_energy_status[socket]->read();
 }
 
 
 template <class CounterStateType>
-void PCM::readAndAggregatePackageCStateResidencies(SafeMsrHandle * msr, CounterStateType & result)
+void PCM::readAndAggregatePackageCStateResidencies(std::shared_ptr<SafeMsrHandle> msr, CounterStateType & result)
 {
     // reading package C state counters
     uint64 cCStateResidency[PCM::MAX_C_STATE + 1];
-    memset(&(cCStateResidency[0]), 0, sizeof(cCStateResidency));
+    memset(cCStateResidency, 0, sizeof(cCStateResidency));
 
-    for(int i=0; i <= PCM::MAX_C_STATE ;++i)
+    for(int i=0; i <= int(PCM::MAX_C_STATE) ;++i)
         if(pkgCStateMsr && pkgCStateMsr[i])
                 msr->read(pkgCStateMsr[i], &(cCStateResidency[i]));
 
-    if (&result!=NULL) { // to make security check happy
-
-      for(int i=0; i <= PCM::MAX_C_STATE ;++i)
+      for(int i=0; i <= int(PCM::MAX_C_STATE) ;++i)
         result.CStateResidency[i] += cCStateResidency[i];
-    }
 }
 
 void PCM::readQPICounters(SystemCounterState & result)
@@ -3203,13 +3198,12 @@ void PCM::readQPICounters(SystemCounterState & result)
         }
         else if (hasPCICFGUncore())
         {
-            if (server_pcicfg_uncore)
-                for (int32 s = 0; (s < num_sockets); ++s)
+                for (int32 s = 0; (s < (int32)server_pcicfg_uncore.size()); ++s)
                 {
                     server_pcicfg_uncore[s]->freezeCounters();
-                    for (uint32 port = 0; port < getQPILinksPerSocket(); ++port)
+                    for (uint32 port = 0; port < (uint32)getQPILinksPerSocket(); ++port)
 		            {
-                        result.incomingQPIPackets[s][port] = server_pcicfg_uncore[s]->getIncomingDataFlits(port) / 8;
+                        result.incomingQPIPackets[s][port] = server_pcicfg_uncore[s]->getIncomingDataFlits(port) / (64/DATA_BYTES_PER_QPI_FLIT);
 			            result.outgoingQPIDataNonDataFlits[s][port] = server_pcicfg_uncore[s]->getOutgoingDataNonDataFlits(port);
 		            }
                     server_pcicfg_uncore[s]->unfreezeCounters();
@@ -3234,7 +3228,7 @@ void PCM::readPackageThermalHeadroom(const uint32 socket, CounterStateType & res
 SocketCounterState PCM::getSocketCounterState(uint32 socket)
 {
     SocketCounterState result;
-    if (MSR)
+    if (MSR.size())
     {
         // reading core and uncore counter states
         for (int32 core = 0; core < num_cores; ++core)
@@ -3271,7 +3265,7 @@ void PCM::getAllCounterStates(SystemCounterState & systemState, std::vector<Sock
         // std::cout << "DEBUG2: "<< core<< " "<< coreStates[core].InstRetiredAny << " "<< std::endl;
     }
 
-    for (int32 s=0; s < num_sockets; ++s)
+    for (uint32 s = 0; s < (uint32)num_sockets; ++s)
     {
         readAndAggregateUncoreMCCounters(s, socketStates[s]);
         readAndAggregateEnergyCounters(s, socketStates[s]);
@@ -3296,28 +3290,28 @@ void PCM::getAllCounterStates(SystemCounterState & systemState, std::vector<Sock
 CoreCounterState PCM::getCoreCounterState(uint32 core)
 {
     CoreCounterState result;
-    if (MSR) result.readAndAggregate(MSR[core]);
+    if (MSR.size()) result.readAndAggregate(MSR[core]);
     return result;
 }
 
 uint32 PCM::getNumCores()
 {
-    return num_cores;
+    return (uint32)num_cores;
 }
 
 uint32 PCM::getNumOnlineCores()
 {
-    return num_online_cores;
+    return (uint32)num_online_cores;
 }
 
 uint32 PCM::getNumSockets()
 {
-    return num_sockets;
+    return (uint32)num_sockets;
 }
 
 uint32 PCM::getThreadsPerCore()
 {
-    return threads_per_core;
+    return (uint32)threads_per_core;
 }
 
 bool PCM::getSMT()
@@ -3335,23 +3329,23 @@ uint32 PCM::getL3ScalingFactor()
 	PCM_CPUID_INFO cpuinfo;
 	pcm_cpuid(0xf,0x1,cpuinfo);
 
-	return cpuinfo.reg.ebx;
+    return (uint32)cpuinfo.reg.ebx;
 
 }
 
 ServerUncorePowerState PCM::getServerUncorePowerState(uint32 socket)
 {
   ServerUncorePowerState result;
-  if(server_pcicfg_uncore && server_pcicfg_uncore[socket])
+  if(server_pcicfg_uncore.size() && server_pcicfg_uncore[socket].get())
   {
     server_pcicfg_uncore[socket]->freezeCounters();
-    for(uint32 port=0;port < server_pcicfg_uncore[socket]->getNumQPIPorts();++port)
+    for(uint32 port=0;port < (uint32)server_pcicfg_uncore[socket]->getNumQPIPorts();++port)
     {
       result.QPIClocks[port] = server_pcicfg_uncore[socket]->getQPIClocks(port);
       result.QPIL0pTxCycles[port] = server_pcicfg_uncore[socket]->getQPIL0pTxCycles(port);
       result.QPIL1Cycles[port] = server_pcicfg_uncore[socket]->getQPIL1Cycles(port);
     }
-    for(uint32 channel=0;channel<server_pcicfg_uncore[socket]->getNumMCChannels();++channel)
+    for (uint32 channel = 0; channel < (uint32)server_pcicfg_uncore[socket]->getNumMCChannels(); ++channel)
     {
       result.DRAMClocks[channel] = server_pcicfg_uncore[socket]->getDRAMClocks(channel);
       for(uint32 cnt=0;cnt<4;++cnt)
@@ -3359,7 +3353,7 @@ ServerUncorePowerState PCM::getServerUncorePowerState(uint32 socket)
     }
     server_pcicfg_uncore[socket]->unfreezeCounters();
   }
-  if(MSR)
+  if(MSR.size())
   {
     uint32 refCore = socketRefCore[socket];
     TemporalThreadAffinity tempThreadAffinity(refCore);
@@ -3443,7 +3437,15 @@ static const uint32 IMC_DEV_IDS[] = {
         0x2fd0,
         0x2fd1,
         0x2fd4,
-        0x2fd5
+        0x2fd5,
+		0x6fb0,
+		0x6fb1,
+		0x6fb4,
+		0x6fb5,
+		0x6fd0,
+		0x6fd1,
+		0x6fd4,
+		0x6fd5
 };
 
 std::vector<std::pair<uint32,uint32> > ServerPCICFGUncore::socket2bus;
@@ -3464,8 +3466,8 @@ void ServerPCICFGUncore::initSocket2Bus()
     #endif
 
 
-    for(uint32 s = 0; s < mcfg.size(); ++s)
-    for(uint32 bus = mcfg[s].startBusNumber; bus <= mcfg[s].endBusNumber; ++bus)
+    for(uint32 s = 0; s < (uint32)mcfg.size(); ++s)
+    for (uint32 bus = (uint32)mcfg[s].startBusNumber; bus <= (uint32)mcfg[s].endBusNumber; ++bus)
     {
         uint32 value = 0;
         try
@@ -3483,7 +3485,7 @@ void ServerPCICFGUncore::initSocket2Bus()
         if (vendor_id != PCM_INTEL_PCI_VENDOR_ID)
            continue;
 
-        for(uint32 i = 0; i< sizeof(IMC_DEV_IDS)/sizeof(IMC_DEV_IDS[0]) ; ++i)
+        for (uint32 i = 0; i < (uint32)sizeof(IMC_DEV_IDS) / sizeof(IMC_DEV_IDS[0]); ++i)
         {
            // match
            if(IMC_DEV_IDS[i] == device_id)
@@ -3495,7 +3497,6 @@ void ServerPCICFGUncore::initSocket2Bus()
         } 
     }
 }
-
 
 int getBusFromSocket(const uint32 socket)
 {
@@ -3521,9 +3522,9 @@ int getBusFromSocket(const uint32 socket)
     return -1;
 }
 
-PciHandleM * ServerPCICFGUncore::createIntelPerfMonDevice(uint32 groupnr_, uint32 bus_, uint32 dev_, uint32 func_, bool checkVendor)
+PciHandleM * ServerPCICFGUncore::createIntelPerfMonDevice(uint32 groupnr_, int32 bus_, uint32 dev_, uint32 func_, bool checkVendor)
 {
-        if (PciHandleM::exists(bus_, dev_, func_))
+        if (PciHandleM::exists((uint32)bus_, dev_, func_))
         {
             PciHandleM * handle = new PciHandleM(groupnr_, bus_, dev_, func_);
 
@@ -3543,10 +3544,6 @@ PciHandleM * ServerPCICFGUncore::createIntelPerfMonDevice(uint32 groupnr_, uint3
 ServerPCICFGUncore::ServerPCICFGUncore(uint32 socket_, PCM * pcm) : 
      bus(-1)
    , groupnr(0)
-   , imcHandles(NULL)
-   , num_imc_channels(0)
-   , qpiLLHandles(NULL)
-   , num_qpi_ports(0)
    , qpi_speed(0)
    , num_imc(0)
 {
@@ -3568,7 +3565,7 @@ ServerPCICFGUncore::ServerPCICFGUncore(uint32 socket_, PCM * pcm) :
         PCM_PCICFG_MC_INIT(1, 2, JKTIVT)
         PCM_PCICFG_MC_INIT(1, 3, JKTIVT)
     }
-    else if(cpu_model == PCM::HASWELLX)
+    else if(cpu_model == PCM::HASWELLX || cpu_model == PCM::BDX_DE)
     {
         PCM_PCICFG_MC_INIT(0, 0, HSX)
         PCM_PCICFG_MC_INIT(0, 1, HSX)
@@ -3614,14 +3611,12 @@ ServerPCICFGUncore::ServerPCICFGUncore(uint32 socket_, PCM * pcm) :
         throw std::exception();
     }
 
-    imcHandles = new PciHandleM *[8];
-
     {
 #define PCM_PCICFG_SETUP_MC_HANDLE(controller,channel)                                 \
         {                                                                           \
             PciHandleM * handle = createIntelPerfMonDevice(groupnr, bus,            \
                 MCX_CHY_REGISTER_DEV_ADDR[controller][channel], MCX_CHY_REGISTER_FUNC_ADDR[controller][channel], true); \
-            if(handle) imcHandles[num_imc_channels++] = handle;                     \
+            if (handle) imcHandles.push_back(std::shared_ptr<PciHandleM>(handle));                     \
         }
 
         PCM_PCICFG_SETUP_MC_HANDLE(0,0)
@@ -3629,30 +3624,28 @@ ServerPCICFGUncore::ServerPCICFGUncore(uint32 socket_, PCM * pcm) :
         PCM_PCICFG_SETUP_MC_HANDLE(0,2)
         PCM_PCICFG_SETUP_MC_HANDLE(0,3)
 
-        if(num_imc_channels > 0) ++num_imc; // at least one memory controller
-        const uint32 num_imc_channels1 = num_imc_channels;
+        if (!imcHandles.empty()) ++num_imc; // at least one memory controller
+        const size_t num_imc_channels1 = (size_t)imcHandles.size();
 
         PCM_PCICFG_SETUP_MC_HANDLE(1,0)
         PCM_PCICFG_SETUP_MC_HANDLE(1,1)
         PCM_PCICFG_SETUP_MC_HANDLE(1,2)
         PCM_PCICFG_SETUP_MC_HANDLE(1,3)
 
-        if(num_imc_channels > num_imc_channels1 ) ++num_imc; // another memory controller found
+        if ((size_t)imcHandles.size() > num_imc_channels1) ++num_imc; // another memory controller found
 
 #undef PCM_PCICFG_SETUP_MC_HANDLE        
     }
 
-    if (num_imc_channels == 0)
+    if (imcHandles.empty())
     {
-        delete [] imcHandles;
-        imcHandles = NULL;
         std::cerr << "PCM error: no memory controllers found." << std::endl;
         throw std::exception();
     }
 
-    if (num_imc_channels < 3)
+    if (imcHandles.size() < 3)
     {
-        std::cerr << "Intel PCM: warning only " << num_imc_channels << " memory channels detected, must be >= 3." << std::endl;
+        std::cerr << "Intel PCM: warning only " << imcHandles.size() << " memory channels detected, must be >= 3." << std::endl;
     }
 
     if (total_sockets_ == 1) {
@@ -3663,19 +3656,16 @@ ServerPCICFGUncore::ServerPCICFGUncore(uint32 socket_, PCM * pcm) :
          *  eliminates register programming that is not needed since no QPI traffic
          *  is possible with single socket systems.
          */
-        num_qpi_ports = 0;
-        std::cerr << num_imc<<" memory controllers detected with total number of "<< num_imc_channels <<" channels. " << std::endl;
+        qpiLLHandles.clear();
+        std::cerr << num_imc << " memory controllers detected with total number of " << imcHandles.size() << " channels. " << std::endl;
         return;
     }
 
 #ifdef PCM_NOQPI
-    num_qpi_ports = 0;
-    std::cerr << num_imc<<" memory controllers detected with total number of "<< num_imc_channels <<" channels. " << std::endl;
+    qpiLLHandles.clear();
+    std::cerr << num_imc<<" memory controllers detected with total number of "<< imcHandles.size() <<" channels. " << std::endl;
     return;
 #else
-    qpiLLHandles = new PciHandleM *[3];
-    for(uint32 i=0; i<3; ++i)
-       qpiLLHandles[i] = NULL;
 
     #define PCM_PCICFG_QPI_INIT(port, arch) \
         QPI_PORTX_REGISTER_DEV_ADDR[port] = arch##_QPI_PORT##port##_REGISTER_DEV_ADDR; \
@@ -3687,7 +3677,7 @@ ServerPCICFGUncore::ServerPCICFGUncore(uint32 socket_, PCM * pcm) :
         PCM_PCICFG_QPI_INIT(1, JKTIVT);
         PCM_PCICFG_QPI_INIT(2, JKTIVT);
     }
-    else if(cpu_model == PCM::HASWELLX)
+    else if(cpu_model == PCM::HASWELLX || cpu_model == PCM::BDX_DE)
     {
         PCM_PCICFG_QPI_INIT(0, HSX);
         PCM_PCICFG_QPI_INIT(1, HSX);
@@ -3706,110 +3696,95 @@ ServerPCICFGUncore::ServerPCICFGUncore(uint32 socket_, PCM * pcm) :
         {
             PciHandleM * handle = createIntelPerfMonDevice(groupnr, bus, QPI_PORTX_REGISTER_DEV_ADDR[0], QPI_PORTX_REGISTER_FUNC_ADDR[0], true);
             if (handle)
-                qpiLLHandles[num_qpi_ports++] = handle;
+                qpiLLHandles.push_back(std::shared_ptr<PciHandleM>(handle));
             else
                 std::cerr << "ERROR: QPI LL monitoring device ("<< groupnr<<":"<<bus<<":"<< QPI_PORTX_REGISTER_DEV_ADDR[0] <<":"<<  QPI_PORTX_REGISTER_FUNC_ADDR[0] << ") is missing. The QPI statistics will be incomplete or missing."<< std::endl;
         }
         {
             PciHandleM * handle = createIntelPerfMonDevice(groupnr, bus, QPI_PORTX_REGISTER_DEV_ADDR[1], QPI_PORTX_REGISTER_FUNC_ADDR[1], true);
             if (handle)
-                qpiLLHandles[num_qpi_ports++] = handle;
+                qpiLLHandles.push_back(std::shared_ptr<PciHandleM>(handle));
             else
                 std::cerr << "ERROR: QPI LL monitoring device ("<< groupnr<<":"<<bus<<":"<< QPI_PORTX_REGISTER_DEV_ADDR[1] <<":"<<  QPI_PORTX_REGISTER_FUNC_ADDR[1] << ") is missing. The QPI statistics will be incomplete or missing."<< std::endl;
         }
         {
             PciHandleM * handle = createIntelPerfMonDevice(groupnr, bus, QPI_PORTX_REGISTER_DEV_ADDR[2], QPI_PORTX_REGISTER_FUNC_ADDR[2], true);
-            if (handle) qpiLLHandles[num_qpi_ports++] = handle;
+            if (handle)
+                qpiLLHandles.push_back(std::shared_ptr<PciHandleM>(handle));
+            else {
+
+                if (pcm->getCPUBrandString().find("E7") != std::string::npos) { // Xeon E7
+                    std::cerr << "ERROR: QPI LL performance monitoring device for the third QPI link was not found on " << pcm->getCPUBrandString() <<
+                        " processor in socket " << socket_ << ". Possibly BIOS hides the device. The QPI statistics will be incomplete or missing." << std::endl;
+                }
+            }
         }
     }
     catch (...)
     {
         std::cerr << "PCM Error: can not create QPI LL handles." <<std::endl;
-        for(uint32 i=0; i<num_qpi_ports; ++i)
-            if (qpiLLHandles[i]) delete qpiLLHandles[i];
-        delete[] qpiLLHandles;
-        qpiLLHandles = NULL;
         throw std::exception();
     }
 #endif
     std::cerr << "Socket "<<socket_<<": "<<
-        num_imc<<" memory controllers detected with total number of "<< num_imc_channels <<" channels. "<<
-        num_qpi_ports<< " QPI ports detected."<<std::endl;
+        num_imc<<" memory controllers detected with total number of "<< getNumMCChannels() <<" channels. "<<
+        getNumQPIPorts()<< " QPI ports detected."<<std::endl;
 }
 
 ServerPCICFGUncore::~ServerPCICFGUncore()
 {
-    if (imcHandles)
-    {
-        for (uint32 i = 0; i < num_imc_channels; ++i)
-            if (imcHandles[i]) delete imcHandles[i];
-        delete[] imcHandles;
-        imcHandles = NULL;
-    }
-
-    if (qpiLLHandles)
-    {
-        for(uint32 i=0; i<num_qpi_ports; ++i)
-            if (qpiLLHandles[i]) delete qpiLLHandles[i];
-        delete[] qpiLLHandles;
-        qpiLLHandles = NULL;
-    }
 }
 
 
+void ServerPCICFGUncore::programServerUncoreMemoryMetrics(int rankA, int rankB)
+{
+    if(rankA <0 && rankB <0)
+    {
+      uint32 MCCntConfig[4] = {
+          MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(3),  // monitor reads on counter 0: CAS_COUNT.RD
+          MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(12), // monitor writes on counter 1: CAS_COUNT.WR
+          MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(2),  // monitor partial writes on counter 2: CAS_COUNT.RD_UNDERFILL,
+          0
+      };
+      programIMC(MCCntConfig);
+      return;
+    }
+    PCM * pcm = PCM::getInstance();
+    const uint32 cpu_model = pcm->getCPUModel();
+    uint32 MCCntConfig[4] = {0,0,0,0};
+    switch(cpu_model)
+    {
+      case PCM::IVYTOWN:
+        MCCntConfig[0] = MC_CH_PCI_PMON_CTL_EVENT((0xb0 + rankA)) + MC_CH_PCI_PMON_CTL_UMASK(0xff); // RD_CAS_RANK(rankA) all banks
+        MCCntConfig[1] = MC_CH_PCI_PMON_CTL_EVENT((0xb8 + rankA)) + MC_CH_PCI_PMON_CTL_UMASK(0xff); // WR_CAS_RANK(rankA) all banks
+        MCCntConfig[2] = MC_CH_PCI_PMON_CTL_EVENT((0xb0 + rankB)) + MC_CH_PCI_PMON_CTL_UMASK(0xff); // RD_CAS_RANK(rankB) all banks
+        MCCntConfig[3] = MC_CH_PCI_PMON_CTL_EVENT((0xb8 + rankB)) + MC_CH_PCI_PMON_CTL_UMASK(0xff); // WR_CAS_RANK(rankB) all banks
+        break;
+      case PCM::HASWELLX:
+      case PCM::BDX_DE:
+        MCCntConfig[0] = MC_CH_PCI_PMON_CTL_EVENT((0xb0 + rankA)) + MC_CH_PCI_PMON_CTL_UMASK(16); // RD_CAS_RANK(rankA) all banks
+        MCCntConfig[1] = MC_CH_PCI_PMON_CTL_EVENT((0xb8 + rankA)) + MC_CH_PCI_PMON_CTL_UMASK(16); // WR_CAS_RANK(rankA) all banks
+        MCCntConfig[2] = MC_CH_PCI_PMON_CTL_EVENT((0xb0 + rankB)) + MC_CH_PCI_PMON_CTL_UMASK(16); // RD_CAS_RANK(rankB) all banks
+        MCCntConfig[3] = MC_CH_PCI_PMON_CTL_EVENT((0xb8 + rankB)) + MC_CH_PCI_PMON_CTL_UMASK(16); // WR_CAS_RANK(rankB) all banks
+        break;
+      default:
+        std::cerr << "PCM Error: your processor "<< pcm->getCPUBrandString() << " model "<< cpu_model << " does not support the requred performance events "<< std::endl;
+        return;
+    }
+    programIMC(MCCntConfig);
+}
+
 void ServerPCICFGUncore::program()
 {
-    for (uint32 i = 0; i < num_imc_channels; ++i)
-    {
-        // imc PMU
+    uint32 MCCntConfig[4] = {
+        MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(3),  // monitor reads on counter 0: CAS_COUNT.RD
+        MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(12), // monitor writes on counter 1: CAS_COUNT.WR
+        0,
+        0
+    };
+    programIMC(MCCntConfig);
 
-        // freeze enable
-        imcHandles[i]->write32(MC_CH_PCI_PMON_BOX_CTL_ADDR, MC_CH_PCI_PMON_BOX_CTL_FRZ_EN);
-        // freeze
-        imcHandles[i]->write32(MC_CH_PCI_PMON_BOX_CTL_ADDR, MC_CH_PCI_PMON_BOX_CTL_FRZ_EN + MC_CH_PCI_PMON_BOX_CTL_FRZ);
-
-#ifdef PCM_UNCORE_PMON_BOX_CHECK_STATUS
-        uint32 val = 0;
-        imcHandles[i]->read32(MC_CH_PCI_PMON_BOX_CTL_ADDR, &val);
-        if ((val & UNCORE_PMON_BOX_CTL_VALID_BITS_MASK) != (MC_CH_PCI_PMON_BOX_CTL_FRZ_EN + MC_CH_PCI_PMON_BOX_CTL_FRZ))
-		{
-            std::cerr << "ERROR: IMC counter programming seems not to work. MC_CH" << i << "_PCI_PMON_BOX_CTL=0x" << std::hex << val << std::endl;
-			std::cerr << "       Please see BIOS options to enable the export of performance monitoring devices." << std::endl;
-		}
-#endif
-
-        // enable counter 0
-        imcHandles[i]->write32(MC_CH_PCI_PMON_CTL0_ADDR, MC_CH_PCI_PMON_CTL_EN);
-
-        // monitor reads on counter 0: CAS_COUNT.RD
-        imcHandles[i]->write32(MC_CH_PCI_PMON_CTL0_ADDR, MC_CH_PCI_PMON_CTL_EN + MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(3));
-
-        // enable counter 1
-        imcHandles[i]->write32(MC_CH_PCI_PMON_CTL1_ADDR, MC_CH_PCI_PMON_CTL_EN);
-
-        // monitor writes on counter 1: CAS_COUNT.WR
-        imcHandles[i]->write32(MC_CH_PCI_PMON_CTL1_ADDR, MC_CH_PCI_PMON_CTL_EN + MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(12));
-
-        // enable counter 2
-        imcHandles[i]->write32(MC_CH_PCI_PMON_CTL2_ADDR, MC_CH_PCI_PMON_CTL_EN);
-
-        // monitor partial writes on counter 2: CAS_COUNT.RD_UNDERFILL
-        imcHandles[i]->write32(MC_CH_PCI_PMON_CTL2_ADDR, MC_CH_PCI_PMON_CTL_EN + MC_CH_PCI_PMON_CTL_EVENT(0x04) + MC_CH_PCI_PMON_CTL_UMASK(2));
-
-        // enable fixed counter (DRAM clocks)
-        imcHandles[i]->write32(MC_CH_PCI_PMON_FIXED_CTL_ADDR, MC_CH_PCI_PMON_FIXED_CTL_EN);
-
-        // reset it
-        imcHandles[i]->write32(MC_CH_PCI_PMON_FIXED_CTL_ADDR, MC_CH_PCI_PMON_FIXED_CTL_EN + MC_CH_PCI_PMON_FIXED_CTL_RST);
-
-        // reset counters values
-        imcHandles[i]->write32(MC_CH_PCI_PMON_BOX_CTL_ADDR, MC_CH_PCI_PMON_BOX_CTL_FRZ_EN + MC_CH_PCI_PMON_BOX_CTL_FRZ + MC_CH_PCI_PMON_BOX_CTL_RST_COUNTERS);
-
-        // unfreeze counters
-        imcHandles[i]->write32(MC_CH_PCI_PMON_BOX_CTL_ADDR, MC_CH_PCI_PMON_BOX_CTL_FRZ_EN);
-    }
-
-    for (uint32 i = 0; i < num_qpi_ports; ++i)
+    for (uint32 i = 0; i < (uint32)qpiLLHandles.size(); ++i)
     {
         // QPI LL PMU
 
@@ -3864,7 +3839,7 @@ uint64 ServerPCICFGUncore::getImcReads()
 {
     uint64 result = 0;
 
-    for (uint32 i = 0; i < num_imc_channels; ++i)
+    for (uint32 i = 0; i < (uint32)imcHandles.size(); ++i)
     {
         uint64 value = 0;
         imcHandles[i]->read64(MC_CH_PCI_PMON_CTR0_ADDR, &value);
@@ -3878,7 +3853,7 @@ uint64 ServerPCICFGUncore::getImcWrites()
 {
     uint64 result = 0;
 
-    for (uint32 i = 0; i < num_imc_channels; ++i)
+    for (uint32 i = 0; i < (uint32)imcHandles.size(); ++i)
     {
         uint64 value = 0;
         imcHandles[i]->read64(MC_CH_PCI_PMON_CTR1_ADDR, &value);
@@ -3892,7 +3867,7 @@ uint64 ServerPCICFGUncore::getIncomingDataFlits(uint32 port)
 {
     uint64 drs = 0, ncb = 0;
 
-    if (port >= num_qpi_ports)
+    if (port >= (uint32)qpiLLHandles.size())
         return 0;
 
     qpiLLHandles[port]->read64(Q_P_PCI_PMON_CTR0_ADDR, &drs);
@@ -3908,7 +3883,7 @@ uint64 ServerPCICFGUncore::getOutgoingDataNonDataFlits(uint32 port)
 
 void ServerPCICFGUncore::program_power_metrics(int mc_profile)
 {
-    for (uint32 i = 0; i < num_qpi_ports; ++i)
+    for (uint32 i = 0; i < (uint32)qpiLLHandles.size(); ++i)
     {
         // QPI LL PMU
 
@@ -3977,7 +3952,12 @@ void ServerPCICFGUncore::program_power_metrics(int mc_profile)
 	break;
     }
 
-    for (uint32 i = 0; i < num_imc_channels; ++i)
+    programIMC(MCCntConfig);
+}
+
+void ServerPCICFGUncore::programIMC(const uint32 * MCCntConfig)
+{
+    for (uint32 i = 0; i < (uint32)imcHandles.size(); ++i)
     {
         // imc PMU
 
@@ -3990,10 +3970,10 @@ void ServerPCICFGUncore::program_power_metrics(int mc_profile)
         uint32 val = 0;
         imcHandles[i]->read32(MC_CH_PCI_PMON_BOX_CTL_ADDR, &val);
         if ((val & UNCORE_PMON_BOX_CTL_VALID_BITS_MASK) != (MC_CH_PCI_PMON_BOX_CTL_FRZ_EN + MC_CH_PCI_PMON_BOX_CTL_FRZ))
-		{
+        {
             std::cerr << "ERROR: IMC counter programming seems not to work. MC_CH" << i << "_PCI_PMON_BOX_CTL=0x" << std::hex << val << std::endl;
-	    std::cerr << "       Please see BIOS options to enable the export of performance monitoring devices." << std::endl;
-		}
+        std::cerr << "       Please see BIOS options to enable the export of performance monitoring devices." << std::endl;
+        }
 #endif
 
         // enable fixed counter (DRAM clocks)
@@ -4002,16 +3982,16 @@ void ServerPCICFGUncore::program_power_metrics(int mc_profile)
         // reset it
         imcHandles[i]->write32(MC_CH_PCI_PMON_FIXED_CTL_ADDR, MC_CH_PCI_PMON_FIXED_CTL_EN + MC_CH_PCI_PMON_FIXED_CTL_RST);
 
-	
+
         imcHandles[i]->write32(MC_CH_PCI_PMON_CTL0_ADDR, MC_CH_PCI_PMON_CTL_EN);
         imcHandles[i]->write32(MC_CH_PCI_PMON_CTL0_ADDR, MC_CH_PCI_PMON_CTL_EN + MCCntConfig[0]);
-	
+
         imcHandles[i]->write32(MC_CH_PCI_PMON_CTL1_ADDR, MC_CH_PCI_PMON_CTL_EN);
         imcHandles[i]->write32(MC_CH_PCI_PMON_CTL1_ADDR, MC_CH_PCI_PMON_CTL_EN + MCCntConfig[1]);
-	
+
         imcHandles[i]->write32(MC_CH_PCI_PMON_CTL2_ADDR, MC_CH_PCI_PMON_CTL_EN);
         imcHandles[i]->write32(MC_CH_PCI_PMON_CTL2_ADDR, MC_CH_PCI_PMON_CTL_EN + MCCntConfig[2]);
-	
+
         imcHandles[i]->write32(MC_CH_PCI_PMON_CTL3_ADDR, MC_CH_PCI_PMON_CTL_EN);
         imcHandles[i]->write32(MC_CH_PCI_PMON_CTL3_ADDR, MC_CH_PCI_PMON_CTL_EN + MCCntConfig[3]);
 
@@ -4025,11 +4005,11 @@ void ServerPCICFGUncore::program_power_metrics(int mc_profile)
 
 void ServerPCICFGUncore::freezeCounters()
 {
-    for (uint32 i = 0; i < num_qpi_ports; ++i)
+    for (size_t i = 0; i < (size_t)qpiLLHandles.size(); ++i)
     {
 		qpiLLHandles[i]->write32(Q_P_PCI_PMON_BOX_CTL_ADDR, Q_P_PCI_PMON_BOX_CTL_RST_FRZ_EN + Q_P_PCI_PMON_BOX_CTL_RST_FRZ);
 	}
-    for (uint32 i = 0; i < num_imc_channels; ++i)
+    for (size_t i = 0; i < (size_t)imcHandles.size(); ++i)
     {
 		imcHandles[i]->write32(MC_CH_PCI_PMON_BOX_CTL_ADDR, MC_CH_PCI_PMON_BOX_CTL_FRZ_EN + MC_CH_PCI_PMON_BOX_CTL_FRZ);
 	}
@@ -4037,11 +4017,11 @@ void ServerPCICFGUncore::freezeCounters()
 
 void ServerPCICFGUncore::unfreezeCounters()
 {
-    for (uint32 i = 0; i < num_qpi_ports; ++i)
+    for (size_t i = 0; i < (size_t)qpiLLHandles.size(); ++i)
     {
 		qpiLLHandles[i]->write32(Q_P_PCI_PMON_BOX_CTL_ADDR, Q_P_PCI_PMON_BOX_CTL_RST_FRZ_EN);
 	}
-	for (uint32 i = 0; i < num_imc_channels; ++i)
+    for (size_t i = 0; i < (size_t)imcHandles.size(); ++i)
     {
 		imcHandles[i]->write32(MC_CH_PCI_PMON_BOX_CTL_ADDR, MC_CH_PCI_PMON_BOX_CTL_FRZ_EN);
 	}
@@ -4051,7 +4031,7 @@ uint64 ServerPCICFGUncore::getQPIClocks(uint32 port)
 {
     uint64 res = 0;
 
-    if (port >= num_qpi_ports)
+    if (port >= (uint32)qpiLLHandles.size())
         return 0;
 
     qpiLLHandles[port]->read64(Q_P_PCI_PMON_CTR3_ADDR, &res);
@@ -4063,7 +4043,7 @@ uint64 ServerPCICFGUncore::getQPIL0pTxCycles(uint32 port)
 {
     uint64 res = 0;
 
-    if (port >= num_qpi_ports)
+    if (port >= (uint32)qpiLLHandles.size())
         return 0;
 
     qpiLLHandles[port]->read64(Q_P_PCI_PMON_CTR0_ADDR, &res);
@@ -4075,7 +4055,7 @@ uint64 ServerPCICFGUncore::getQPIL1Cycles(uint32 port)
 {
     uint64 res = 0;
 
-    if (port >= num_qpi_ports)
+    if (port >= (uint32)qpiLLHandles.size())
         return 0;
 
     qpiLLHandles[port]->read64(Q_P_PCI_PMON_CTR2_ADDR, &res);
@@ -4087,7 +4067,7 @@ uint64 ServerPCICFGUncore::getDRAMClocks(uint32 channel)
 {
     uint64 result = 0;
 
-    if(channel < num_imc_channels) 
+    if (channel < (uint32)imcHandles.size())
       imcHandles[channel]->read64(MC_CH_PCI_PMON_FIXED_CTR_ADDR, &result);
 
     return result;
@@ -4097,7 +4077,7 @@ uint64 ServerPCICFGUncore::getMCCounter(uint32 channel, uint32 counter)
 {
     uint64 result = 0;
     
-    if(channel < num_imc_channels) 
+    if (channel < (uint32)imcHandles.size())
     {
       switch(counter)
       {
@@ -4123,7 +4103,7 @@ uint64 ServerPCICFGUncore::getQPILLCounter(uint32 port, uint32 counter)
 {
     uint64 result = 0;
     
-    if(port < num_qpi_ports) 
+    if (port < (uint32)qpiLLHandles.size())
     {
       switch(counter)
       {
@@ -4182,10 +4162,10 @@ void ServerPCICFGUncore::enableJKTWorkaround(bool enable)
 
 uint64 ServerPCICFGUncore::computeQPISpeed(const uint32 core_nr, const int cpumodel)
 {
-    if(qpi_speed.size()==0)
+    if(qpi_speed.empty())
     {
-	qpi_speed.resize(num_qpi_ports);
-        for (uint32 i=0; i<num_qpi_ports; ++i) {
+	    qpi_speed.resize(getNumQPIPorts());
+        for (size_t i = 0; i<getNumQPIPorts(); ++i) {
            if(i == 1)
            {
               qpi_speed[1] = qpi_speed[0]; // link 1 does not have own speed register, it runs with the speed of link 0
@@ -4195,8 +4175,8 @@ uint64 ServerPCICFGUncore::computeQPISpeed(const uint32 core_nr, const int cpumo
            uint32 value = 0;
            reg.read32(QPI_RATE_STATUS_ADDR, &value);
            value &= 7; // extract lower 3 bits
-           if(value) qpi_speed[i] = (4000000000ULL + ((uint64)value)*800000000ULL)*2ULL;
-           if(qpi_speed[i]==0)
+           if(value) qpi_speed[i] = static_cast<uint64>((4000000000ULL + ((uint64)value)*800000000ULL)*2ULL);
+           if(qpi_speed[i] == 0ULL)
            {
                std::cerr << "Warning: QPI_RATE_STATUS register is not available on port "<< i <<". Computing QPI speed using a measurement loop." << std::endl;
  
@@ -4204,7 +4184,7 @@ uint64 ServerPCICFGUncore::computeQPISpeed(const uint32 core_nr, const int cpumo
                const uint64 timerGranularity = 1000000ULL; // mks
     
                PCM * pcm = PCM::getInstance();
-               uint64 startClocks = getQPIClocks(i);
+               uint64 startClocks = getQPIClocks((uint32)i);
                uint64 startTSC = pcm->getTickCount(timerGranularity, core_nr);
                uint64 endTSC;
                do
@@ -4212,10 +4192,10 @@ uint64 ServerPCICFGUncore::computeQPISpeed(const uint32 core_nr, const int cpumo
                     endTSC = pcm->getTickCount(timerGranularity, core_nr);
                } while (endTSC - startTSC < 200000ULL); // spin for 200 ms
 
-               uint64 endClocks = getQPIClocks(i);
+               uint64 endClocks = getQPIClocks((uint32)i);
 
                qpi_speed[i] = ((std::max)((endClocks - startClocks) * 16ULL * timerGranularity / (endTSC - startTSC),0ULL));
-               if(cpumodel == PCM::HASWELLX) {
+               if(cpumodel == PCM::HASWELLX || cpumodel == PCM::BDX_DE) /* XXX:BDX_DE does not have QPI. */{
                   qpi_speed[i] /=2; // HSX runs QPI clocks with doubled speed
                }
            }
@@ -4232,7 +4212,7 @@ uint64 ServerPCICFGUncore::computeQPISpeed(const uint32 core_nr, const int cpumo
 }
 
 #ifdef _MSC_VER
-DWORD WINAPI WatchDogProc(LPVOID state)
+static DWORD WINAPI WatchDogProc(LPVOID state)
 #else
 void * WatchDogProc(void * state)
 #endif
@@ -4240,36 +4220,32 @@ void * WatchDogProc(void * state)
     CounterWidthExtender * ext = (CounterWidthExtender * ) state;
     while(1)
     {
-#ifdef _MSC_VER
-		Sleep(10000);
-#else
-        sleep(10);
-#endif
+        MySleepMs(static_cast<int>(ext->watchdog_delay_ms));
         /* uint64 dummy = */ ext->read();
     }
     return NULL;
 }
 
-uint32 PCM::CX_MSR_PMON_CTRY(uint32 Cbo, uint32 Ctr) const
+uint64 PCM::CX_MSR_PMON_CTRY(uint32 Cbo, uint32 Ctr) const
 {
     if(JAKETOWN == cpu_model || IVYTOWN == cpu_model)
     {
         return JKT_C0_MSR_PMON_CTR0 + ((JKTIVT_CBO_MSR_STEP)*Cbo) + Ctr;
 
-    } else if(HASWELLX == cpu_model)
+    } else if(HASWELLX == cpu_model || BDX_DE == cpu_model)
     {
         return HSX_C0_MSR_PMON_CTR0 + ((HSX_CBO_MSR_STEP)*Cbo) + Ctr;
     }
     return 0;
 }
 
-uint32 PCM::CX_MSR_PMON_BOX_FILTER(uint32 Cbo) const
+uint64 PCM::CX_MSR_PMON_BOX_FILTER(uint32 Cbo) const
 {
     if(JAKETOWN == cpu_model || IVYTOWN == cpu_model)
     {
         return JKT_C0_MSR_PMON_BOX_FILTER + ((JKTIVT_CBO_MSR_STEP)*Cbo);
 
-    } else if(HASWELLX == cpu_model)
+    } else if(HASWELLX == cpu_model || BDX_DE == cpu_model)
     {
         return HSX_C0_MSR_PMON_BOX_FILTER + ((HSX_CBO_MSR_STEP)*Cbo);
     }
@@ -4277,39 +4253,39 @@ uint32 PCM::CX_MSR_PMON_BOX_FILTER(uint32 Cbo) const
     return 0;
 }
 
-uint32 PCM::CX_MSR_PMON_BOX_FILTER1(uint32 Cbo) const
+uint64 PCM::CX_MSR_PMON_BOX_FILTER1(uint32 Cbo) const
 {
     if(IVYTOWN == cpu_model)
     {
         return IVT_C0_MSR_PMON_BOX_FILTER1 + ((JKTIVT_CBO_MSR_STEP)*Cbo);
 
-    } else if(HASWELLX == cpu_model)
+    } else if(HASWELLX == cpu_model || BDX_DE == cpu_model)
     {
         return HSX_C0_MSR_PMON_BOX_FILTER1 + ((HSX_CBO_MSR_STEP)*Cbo);
     }
     return 0;
 }
 
-uint32 PCM::CX_MSR_PMON_CTLY(uint32 Cbo, uint32 Ctl) const
+uint64 PCM::CX_MSR_PMON_CTLY(uint32 Cbo, uint32 Ctl) const
 {
     if(JAKETOWN == cpu_model || IVYTOWN == cpu_model)
     {
         return JKT_C0_MSR_PMON_CTL0 + ((JKTIVT_CBO_MSR_STEP)*Cbo) + Ctl;
 
-    } else if(HASWELLX == cpu_model)
+    } else if(HASWELLX == cpu_model || BDX_DE == cpu_model)
     {
         return HSX_C0_MSR_PMON_CTL0 + ((HSX_CBO_MSR_STEP)*Cbo) + Ctl;
     }
     return 0;
 }
 
-uint32 PCM::CX_MSR_PMON_BOX_CTL(uint32 Cbo) const
+uint64 PCM::CX_MSR_PMON_BOX_CTL(uint32 Cbo) const
 {
     if(JAKETOWN == cpu_model || IVYTOWN == cpu_model)
     {
         return JKT_C0_MSR_PMON_BOX_CTL + ((JKTIVT_CBO_MSR_STEP)*Cbo);
 
-    } else if(HASWELLX == cpu_model)
+    } else if(HASWELLX == cpu_model || BDX_DE == cpu_model)
     {
         return HSX_C0_MSR_PMON_BOX_CTL + ((HSX_CBO_MSR_STEP)*Cbo);
     }
@@ -4325,18 +4301,18 @@ uint32 PCM::getMaxNumOfCBoxes() const
          *  the number of physical cores per socket which is the expected
          *  value to be returned.
          */
-        return num_phys_cores_per_socket;
+        return (uint32)num_phys_cores_per_socket;
     }
     return 0;
 }
 
-void PCM::programCboOpcodeFilter(const uint32 opc, const uint32 cbo, SafeMsrHandle * msr)
+void PCM::programCboOpcodeFilter(const uint32 opc, const uint32 cbo, std::shared_ptr<SafeMsrHandle> msr)
 {
     if(JAKETOWN == cpu_model)
     {
         msr->write(CX_MSR_PMON_BOX_FILTER(cbo), JKT_CBO_MSR_PMON_BOX_FILTER_OPC(opc));
 
-    } else if(IVYTOWN == cpu_model || HASWELLX == cpu_model)
+    } else if(IVYTOWN == cpu_model || HASWELLX == cpu_model || BDX_DE == cpu_model)
     {
         msr->write(CX_MSR_PMON_BOX_FILTER1(cbo), IVTHSX_CBO_MSR_PMON_BOX_FILTER1_OPC(opc));
     }
@@ -4349,7 +4325,7 @@ void PCM::programPCIeMissCounters(const PCM::PCIeEventCode event_, const uint32 
 
 void PCM::programPCIeCounters(const PCM::PCIeEventCode event_, const uint32 tid_, const uint32 miss_)
 {
-    for (int32 i = 0; (i < num_sockets) && MSR; ++i)
+    for (int32 i = 0; (i < num_sockets) && MSR.size(); ++i)
     {
         uint32 refCore = socketRefCore[i];
         TemporalThreadAffinity tempThreadAffinity(refCore); // speedup trick for Linux
@@ -4371,9 +4347,9 @@ void PCM::programPCIeCounters(const PCM::PCIeEventCode event_, const uint32 tid_
             }
 #endif
 
-            programCboOpcodeFilter(event_, cbo, MSR[refCore]);
+            programCboOpcodeFilter((uint32)event_, cbo, MSR[refCore]);
 
-            if(HASWELLX == cpu_model && tid_ != 0)
+            if((HASWELLX == cpu_model || BDX_DE == cpu_model) && tid_ != 0)
                 MSR[refCore]->write(CX_MSR_PMON_BOX_FILTER(cbo), tid_);
 
             MSR[refCore]->write(CX_MSR_PMON_CTLY(cbo, 0), CBO_MSR_PMON_CTL_EN);

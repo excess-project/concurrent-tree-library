@@ -146,7 +146,8 @@ int main(int argc, char * argv[])
     set_signal_handlers();
 
     std::cerr << "\n Intel(r) Performance Counter Monitor " << INTEL_PCM_VERSION << std::endl;
-    std::cerr << "\n Power Monitoring Utility\n Copyright (c) 2011-2014 Intel Corporation\n";
+    std::cerr << "\n Power Monitoring Utility\n";
+    std::cerr << INTEL_PCM_COPYRIGHT << std::endl;
     
     int imc_profile = 0;
     int pcu_profile = 0;
@@ -287,8 +288,12 @@ int main(int argc, char * argv[])
     std::cout << std::fixed;
     std::cerr << "\nMC counter group: "<<imc_profile << std::endl;
     std::cerr << "PCU counter group: "<<pcu_profile << std::endl; 
-    if(pcu_profile == 0)
-        std::cerr << "Freq bands [0/1/2]: "<<freq_band[0]*100 << " MHz; "<< freq_band[1]*100 << " MHz; "<<freq_band[2]*100 << " MHz; "<<std::endl; 
+    if (pcu_profile == 0) {
+        if (cpu_model == PCM::HASWELLX || cpu_model == PCM::BDX_DE)
+            std::cerr << "Your processor does not support frequency band statistics" << std::endl;
+        else
+            std::cerr << "Freq bands [0/1/2]: " << freq_band[0] * 100 << " MHz; " << freq_band[1] * 100 << " MHz; " << freq_band[2] * 100 << " MHz; " << std::endl;
+    }
     if(sysCmd != NULL) 
         std::cerr << "Update every "<<delay<<" seconds"<< std::endl;
 
@@ -395,6 +400,8 @@ int main(int argc, char * argv[])
         switch(pcu_profile)
         {
         case 0:
+          if (cpu_model == PCM::HASWELLX || cpu_model == PCM::BDX_DE)
+              break;
           std::cout << "S"<<socket
              << "; PCUClocks: "<< getPCUClocks(BeforeState[socket],AfterState[socket])
              << "; Freq band 0/1/2 cycles: "<< 100.*getNormalizedPCUCounter(1,BeforeState[socket],AfterState[socket])<<"%"
@@ -451,11 +458,11 @@ int main(int argc, char * argv[])
         case 6:
           std::cout << "S"<<socket ;
 
-          if(cpu_model == PCM::HASWELLX)
+          if(cpu_model == PCM::HASWELLX || PCM::BDX_DE == cpu_model)
               std::cout << "; PC1e+ residency: "<< getNormalizedPCUCounter(0,BeforeState[socket],AfterState[socket], m)*100. <<" %"
                            "; PC1e+ transition count: "<< getPCUCounter(1,BeforeState[socket],AfterState[socket]) <<" ";
 
-          if(cpu_model == PCM::IVYTOWN || cpu_model == PCM::HASWELLX)
+          if(cpu_model == PCM::IVYTOWN || cpu_model == PCM::HASWELLX || PCM::BDX_DE == cpu_model)
           {
             std::cout << "; PC2 residency: "<< getPackageCStateResidency(2,BeforeState[socket],AfterState[socket])*100. <<" %";
             std::cout << "; PC2 transitions: "<< getPCUCounter(2,BeforeState[socket],AfterState[socket]) <<" ";
@@ -467,7 +474,7 @@ int main(int argc, char * argv[])
           std::cout << "\n";
                   break;
         case 7:
-          if(PCM::HASWELLX == cpu_model) {
+          if(PCM::HASWELLX == cpu_model || PCM::BDX_DE == cpu_model) {
               std::cout << "S"<<socket
                 << "; UFS_TRANSITIONS_PERF_P_LIMIT: "<< getNormalizedPCUCounter(0,BeforeState[socket],AfterState[socket], m)*100. <<" %"
                 << "; UFS_TRANSITIONS_IO_P_LIMIT: " << getNormalizedPCUCounter(1,BeforeState[socket],AfterState[socket], m)*100. <<" %"
@@ -477,7 +484,7 @@ int main(int argc, char * argv[])
           }
           break;
         case 8:
-          if(PCM::HASWELLX == cpu_model) {
+          if(PCM::HASWELLX == cpu_model || PCM::BDX_DE == cpu_model) {
               std::cout << "S"<<socket
                 << "; UFS_TRANSITIONS_DOWN: "<< getNormalizedPCUCounter(0,BeforeState[socket],AfterState[socket], m)*100. <<" %"
                 << "\n";

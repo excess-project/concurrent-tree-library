@@ -62,7 +62,7 @@ TSXEvent eventDefinition[] = {
 {"RTM_RETIRED.ABORTED",                                    0xC9, 0x04,  "Number of times an RTM execution aborted due to any reasons (multiple categories may count as one)"},
 {"RTM_RETIRED.ABORTED_MISC1",                              0xC9, 0x08,  "Number of times an RTM execution aborted due to various memory events"},
 {"RTM_RETIRED.ABORTED_MISC2",                              0xC9, 0x10,  "Number of times an RTM execution aborted due to uncommon conditions"},
-{"RTM_RETIRED.ABORTED_MISC3",                              0xC9, 0x20,  "Number of times an RTM execution aborted due to HLE-unfriendly instructions"},
+{"RTM_RETIRED.ABORTED_MISC3",                              0xC9, 0x20,  "Number of times an RTM execution aborted due to Intel TSX-unfriendly instructions"},
 {"RTM_RETIRED.ABORTED_MISC4",                              0xC9, 0x40,  "Number of times an RTM execution aborted due to incompatible memory type"},
 {"RTM_RETIRED.ABORTED_MISC5",                              0xC9, 0x80,  "Number of times an RTM execution aborted due to none of the previous 4 categories (e.g. interrupt)"},
 
@@ -71,7 +71,7 @@ TSXEvent eventDefinition[] = {
 {"HLE_RETIRED.ABORTED",                                    0xC8, 0x04,  "Number of times an HLE execution aborted due to any reasons (multiple categories may count as one)"},
 {"HLE_RETIRED.ABORTED_MISC1",                              0xC8, 0x08,  "Number of times an HLE execution aborted due to various memory events"},
 {"HLE_RETIRED.ABORTED_MISC2",                              0xC8, 0x10,  "Number of times an HLE execution aborted due to uncommon conditions"},
-{"HLE_RETIRED.ABORTED_MISC3",                              0xC8, 0x20,  "Number of times an HLE execution aborted due to HLE-unfriendly instructions"},
+{"HLE_RETIRED.ABORTED_MISC3",                              0xC8, 0x20,  "Number of times an HLE execution aborted due to Intel TSX-unfriendly instructions"},
 {"HLE_RETIRED.ABORTED_MISC4",                              0xC8, 0x40,  "Number of times an HLE execution aborted due to incompatible memory type"},
 {"HLE_RETIRED.ABORTED_MISC5",                              0xC8, 0x80,  "Number of times an HLE execution aborted due to none of the previous 4 categories (e.g. interrupt)"},
 
@@ -99,6 +99,7 @@ void print_usage(const string progname)
     cerr << "                                        will read counters only after external program finishes" << endl;
     cerr << " Supported <options> are: " << endl;
     cerr << "  -h    | --help  | /h               => print this help and exit" << endl;
+    cerr << "  -F    | -force                     => force running this program despite lack of HW RTM support (optional)" << endl;
     cerr << "  -csv[=file.csv] | /csv[=file.csv]  => output compact CSV format to screen or" << endl
          << "                                        to a file, in case filename is provided" << endl;
     cerr << "  [-e event1] [-e event2] [-e event3]=> optional list of custom TSX events to monitor (up to 4)."
@@ -198,7 +199,7 @@ int main(int argc, char * argv[])
     cerr << endl;
     cerr << " Intel(r) Performance Counter Monitor: Intel(r) Transactional Synchronization Extensions Monitoring Utility "<< endl;
     cerr << endl;
-    cerr << " Copyright (c) 2013-2014 Intel Corporation" << endl;
+    cerr << INTEL_PCM_COPYRIGHT << std::endl;
     cerr << endl;
 
     double delay = -1.0;
@@ -208,6 +209,7 @@ int main(int argc, char * argv[])
     int cur_event;
     bool csv = false;
     long diff_usec = 0; // deviation of clock is useconds between measurements
+    bool force = false;
     int calibrated = PCM_CALIBRATION_INTERVAL - 2; // keeps track is the clock calibration needed
     string program = string(argv[0]);
 
@@ -256,6 +258,13 @@ int main(int argc, char * argv[])
             }
             events.push_back(cur_event);
             continue;
+        }
+        else
+        if ( (strncmp(*argv, "-F", 2) == 0) ||
+             (strncmp(*argv, "-f", 2) == 0) ||
+             (strncmp(*argv, "-force", 6) == 0) )
+        {
+             force = true;
         }
         else
         if (strncmp(*argv, "--", 2) == 0)
@@ -343,6 +352,16 @@ int main(int argc, char * argv[])
     }
     
     cerr << "\nDetected "<< m->getCPUBrandString() << " \"Intel(r) microarchitecture codename "<<m->getUArchCodename()<<"\""<<endl;
+
+    bool rtm_support = m->supportsRTM();
+
+    if (!rtm_support) {
+        if (!force) {
+            cerr << "No RTM support detected, use -F if you still want to run this program." << endl;
+            exit(EXIT_FAILURE);
+        }
+        cerr << "No RTM support detected, but -F found as argument, running anyway." << endl;
+    }
 
     uint64 BeforeTime = 0, AfterTime = 0;
     SystemCounterState SysBeforeState, SysAfterState;

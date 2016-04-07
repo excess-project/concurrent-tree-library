@@ -55,7 +55,8 @@ class PciHandle
 #endif
 
     PciHandle();            // forbidden
-    PciHandle(PciHandle &); // forbidden
+    PciHandle(const PciHandle &); // forbidden
+    PciHandle& operator = (const PciHandle &); // forbidden
 
 public:
     PciHandle(uint32 groupnr_, uint32 bus_, uint32 device_, uint32 function_);

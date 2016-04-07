@@ -30,6 +30,8 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #include <MSRAccessor.h>
 #endif
 
+#include "mutex.h"
+#include <memory>
 
 class MsrHandle
 {
@@ -43,13 +45,14 @@ class MsrHandle
 #endif
     uint32 cpu_id;
     MsrHandle();            // forbidden
-    MsrHandle(MsrHandle &); // forbidden
+    MsrHandle(const MsrHandle &); // forbidden
+    MsrHandle & operator = (const MsrHandle &); // forbidden
 
 public:
     MsrHandle(uint32 cpu);
     int32 read(uint64 msr_number, uint64 * value);
     int32 write(uint64 msr_number, uint64 value);
-    int32 getCoreId() { return cpu_id; }
+    int32 getCoreId() { return (int32)cpu_id; }
 #ifdef __APPLE__
     int32 buildTopology(uint32 num_cores, void*);
     uint32 getNumInstances();
@@ -61,16 +64,17 @@ public:
 
 class SafeMsrHandle
 {
-    MsrHandle * pHandle;
+    std::shared_ptr<MsrHandle> pHandle;
+    PCM_Util::Mutex mutex;
     
-    SafeMsrHandle(SafeMsrHandle &); // forbidden
+    SafeMsrHandle(const SafeMsrHandle &); // forbidden
+    SafeMsrHandle& operator = (const SafeMsrHandle &); // forbidden
     
   public:
-    SafeMsrHandle() : pHandle(NULL) {}
+    SafeMsrHandle() {}
     
-    SafeMsrHandle(uint32 core_id)
+    SafeMsrHandle(uint32 core_id) : pHandle(new MsrHandle(core_id))
     {
-      pHandle = new MsrHandle(core_id);
     }
     
     int32 read(uint64 msr_number, uint64 * value)
@@ -80,7 +84,7 @@ class SafeMsrHandle
       
       *value = 0;
 
-      return sizeof(uint64);
+      return (int32)sizeof(uint64);
     }
     
     int32 write(uint64 msr_number, uint64 value)
@@ -88,7 +92,7 @@ class SafeMsrHandle
       if(pHandle)
         return pHandle->write(msr_number, value);
       
-      return sizeof(uint64);
+      return (int32)sizeof(uint64);
     }
     int32 getCoreId()
     {
@@ -98,6 +102,15 @@ class SafeMsrHandle
       throw std::exception();
       return -1;
     }
+
+    void lock() {
+        mutex.lock();
+    }
+
+    void unlock() {
+        mutex.unlock();
+    }
+
 #ifdef __APPLE__
     int32 buildTopology(uint32 num_cores, void* p)
     {
@@ -134,11 +147,6 @@ class SafeMsrHandle
 #endif
     virtual ~SafeMsrHandle()
     {
-      if(pHandle)
-      {
-        delete pHandle;
-        pHandle = NULL;
-      }
     }
 };
 

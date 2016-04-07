@@ -16,14 +16,10 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 //            Jim Harris (FreeBSD)
 
 #include <iostream>
-#include <sstream>
-#include <iomanip>
+#include <stdio.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <stdio.h>
-#include <assert.h>
-#include <string.h>
 #include "pci.h"
 
 #ifndef _MSC_VER
@@ -80,25 +76,25 @@ int32 PciHandle::read32(uint64 offset, uint32 * value)
 		PCICFG_Request req;
 		ULONG64 result = 0;
 		DWORD reslength = 0;
-		req.bus = bus;
-		req.dev = device;
-		req.func = function;
+		req.bus = (ULONG)bus;
+        req.dev = (ULONG)device;
+        req.func = (ULONG)function;
 		req.bytes = sizeof(uint32);
-		req.reg = (uint32)offset;
+		req.reg = (ULONG)offset;
 
-		BOOL status = DeviceIoControl(hDriver, IO_CTL_PCICFG_READ, &req, sizeof(PCICFG_Request), &result, sizeof(uint64), &reslength, NULL);
+		BOOL status = DeviceIoControl(hDriver, IO_CTL_PCICFG_READ, &req, (DWORD)sizeof(PCICFG_Request), &result, (DWORD)sizeof(uint64), &reslength, NULL);
 		*value = (uint32)result;
 		if (!status)
 		{
 			//std::cerr << "Error reading PCI Config space at bus "<<bus<<" dev "<< device<<" function "<< function <<" offset "<< offset << " size "<< req.bytes  << ". Windows error: "<<GetLastError()<<std::endl;
 		}
-		return reslength;
+		return (int32)reslength;
 	}
 	DWORD result = 0;
 	if(ReadPciConfigDwordEx(pciAddress,(DWORD)offset,&result))
 	{
 		*value = result;
-		return sizeof(uint32);
+		return (int32)sizeof(uint32);
 	}
 	return 0;
 }
@@ -117,12 +113,12 @@ int32 PciHandle::write32(uint64 offset, uint32 value)
 		req.reg = (uint32)offset;
 		req.write_value = value;
 
-		BOOL status = DeviceIoControl(hDriver, IO_CTL_PCICFG_WRITE, &req, sizeof(PCICFG_Request), &result, sizeof(uint64), &reslength, NULL);
+        BOOL status = DeviceIoControl(hDriver, IO_CTL_PCICFG_WRITE, &req, (DWORD)sizeof(PCICFG_Request), &result, (DWORD)sizeof(uint64), &reslength, NULL);
 		if (!status)
 		{
 			//std::cerr << "Error writing PCI Config space at bus "<<bus<<" dev "<< device<<" function "<< function <<" offset "<< offset << " size "<< req.bytes  << ". Windows error: "<<GetLastError()<<std::endl;
 		}
-		return reslength;
+		return (int32)reslength;
 	}
 
 	return (WritePciConfigDwordEx(pciAddress,(DWORD)offset,value))?sizeof(uint32):0;
@@ -141,12 +137,12 @@ int32 PciHandle::read64(uint64 offset, uint64 * value)
 		req.bytes = sizeof(uint64);
 		req.reg = (uint32)offset;
 
-		BOOL status = DeviceIoControl(hDriver, IO_CTL_PCICFG_READ, &req, sizeof(PCICFG_Request), value, sizeof(uint64), &reslength, NULL);
+        BOOL status = DeviceIoControl(hDriver, IO_CTL_PCICFG_READ, &req, (DWORD)sizeof(PCICFG_Request), value, (DWORD)sizeof(uint64), &reslength, NULL);
 		if (!status)
 		{
 			//std::cerr << "Error reading PCI Config space at bus "<<bus<<" dev "<< device<<" function "<< function <<" offset "<< offset << " size "<< req.bytes  << ". Windows error: "<<GetLastError()<<std::endl;
 		}
-		return reslength;
+		return (int32)reslength;
 	}
 
 	cvt_ds cvt;
@@ -158,7 +154,7 @@ int32 PciHandle::read64(uint64 offset, uint64 * value)
 	if(status)
 	{
 		*value = cvt.ui64;
-		return sizeof(uint64);
+		return (int32)sizeof(uint64);
 	}
 	return 0;
 }
@@ -456,13 +452,19 @@ bool PciHandleM::exists(uint32 /* bus_*/, uint32 /* device_ */, uint32 /* functi
 {
     int handle = ::open("/dev/mem", O_RDWR);
 
-    if (handle < 0) return false;
+    if (handle < 0) {
+        perror("error opening /dev/mem");
+        return false;
+    }
 
     ::close(handle);
 
     handle = ::open("/sys/firmware/acpi/tables/MCFG", O_RDONLY);
 
-    if (handle < 0) return false;
+    if (handle < 0) {
+        perror("error opening /sys/firmware/acpi/tables/MCFG");
+        return false;
+    }
 
     ::close(handle);
 
@@ -600,18 +602,25 @@ bool PciHandleMM::exists(uint32 bus_, uint32 device_, uint32 function_)
 {
     int handle = ::open("/dev/mem", O_RDWR);
 
-    if (handle < 0) return false;
+    if (handle < 0) {
+        perror("error opening /dev/mem");
+        return false;
+    }
 
     ::close(handle);
 
     handle = ::open("/sys/firmware/acpi/tables/MCFG", O_RDONLY);
 
-    if (handle < 0) return false;
+    if (handle < 0) {
+        perror("error opening /sys/firmware/acpi/tables/MCFG");
+        return false;
+    }
 
     ::close(handle);
 
     return true;
 }
+
 
 int32 PciHandleMM::read32(uint64 offset, uint32 * value)
 {

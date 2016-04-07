@@ -6,7 +6,7 @@ OPT= -g -O3
 CXXFLAGS+= -Wall -fPIC $(OPT)
 vpath %.cpp ..
 
-libintelpcm.so: msr.o cpucounters.o pci.o client_bw.o
+libintelpcm.so: msr.o cpucounters.o pci.o client_bw.o utils.o
 	$(CXX) $(CXXFLAGS) -shared $^ -lpthread -o $@
 
 clean:

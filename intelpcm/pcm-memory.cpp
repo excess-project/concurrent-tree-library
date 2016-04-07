@@ -16,7 +16,7 @@
 
 
 /*!     \file pcm-memory.cpp
-  \brief Example of using CPU counters: implements a performance counter monitoring utility for memory controller channels
+  \brief Example of using CPU counters: implements a performance counter monitoring utility for memory controller channels and DIMMs (ranks)
   */
 #define HACK_TO_REMOVE_DUPLICATE_ERROR
 #include <iostream>
@@ -42,10 +42,16 @@
 //Programmable iMC counter
 #define READ 0
 #define WRITE 1
+#define READ_RANK_A 0
+#define WRITE_RANK_A 1
+#define READ_RANK_B 2
+#define WRITE_RANK_B 3
 #define PARTIAL 2
 #define PCM_DELAY_DEFAULT 1.0 // in seconds
 #define PCM_DELAY_MIN 0.015 // 15 milliseconds is practical on most modern CPUs
 #define PCM_CALIBRATION_INTERVAL 50 // calibrate clock only every 50th iteration
+
+#define DEFAULT_DISPLAY_COLUMNS 2
 
 using namespace std;
 
@@ -58,8 +64,10 @@ void print_help(const string prog_name)
     cerr << "                                        will read counters only after external program finishes" << endl;
     cerr << " Supported <options> are: " << endl;
     cerr << "  -h    | --help  | /h               => print this help and exit" << endl;
+    cerr << "  -rank=X | /rank=X                  => monitor DIMM rank X. At most 2 out of 8 total ranks can be monitored simultaneously." << endl;
     cerr << "  -csv[=file.csv] | /csv[=file.csv]  => output compact CSV format to screen or" << endl
          << "                                        to a file, in case filename is provided" << endl;
+    cerr << "  -columns=X | /columns=X            => Number of columns to display the NUMA Nodes, defaults to 2." << endl;
 #ifdef _MSC_VER
     cerr << "  --uninstallDriver | --installDriver=> (un)install driver" << endl;
 #endif
@@ -70,7 +78,128 @@ void print_help(const string prog_name)
     cerr << endl;
 }
 
-void display_bandwidth(float *iMC_Rd_socket_chan, float *iMC_Wr_socket_chan, float *iMC_Rd_socket, float *iMC_Wr_socket, uint32 numSockets, uint32 num_imc_channels, uint64 *partial_write)
+void printSocketBWHeader(uint32 no_columns, uint32 skt)
+{
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|---------------------------------------|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|--             Socket "<<setw(2)<<i<<"             --|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|---------------------------------------|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|--     Memory Channel Monitoring     --|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|---------------------------------------|";
+    }
+    cout << endl;
+}
+
+void printSocketRankBWHeader(uint32 no_columns, uint32 skt)
+{
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|-------------------------------------------|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|--               Socket "<<setw(2)<<i<<"               --|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|-------------------------------------------|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|--           DIMM Rank Monitoring        --|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|-------------------------------------------|";
+    }
+    cout << endl;
+}
+
+void printSocketChannelBW(uint32 no_columns, uint32 skt, uint32 num_imc_channels, float* iMC_Rd_socket_chan, float* iMC_Wr_socket_chan)
+{
+    for (uint32 channel = 0; channel < num_imc_channels; ++channel) {
+        // check all the sockets for bad channel "channel"
+        unsigned bad_channels = 0;
+        for (uint32 i=skt; i<(skt+no_columns); ++i) {
+            if (iMC_Rd_socket_chan[i*num_imc_channels + channel] < 0.0 || iMC_Wr_socket_chan[i*num_imc_channels + channel] < 0.0) //If the channel read neg. value, the channel is not working; skip it.
+                ++bad_channels;
+        }
+        if (bad_channels == no_columns) { // the channel is missing on all sockets in the row
+            continue;
+        }
+        for (uint32 i=skt; i<(skt+no_columns); ++i) {
+            cout << "|-- Mem Ch "<<setw(2)<<channel<<": Reads (MB/s): "<<setw(8)<<iMC_Rd_socket_chan[i*num_imc_channels+channel]<<" --|";
+        }
+        cout << endl;
+        for (uint32 i=skt; i<(skt+no_columns); ++i) {
+            cout << "|--            Writes(MB/s): "<<setw(8)<<iMC_Wr_socket_chan[i*num_imc_channels+channel]<<" --|";
+        }
+        cout << endl;
+    }
+}
+
+void printSocketChannelBW(uint32 no_columns, uint32 skt, uint32 num_imc_channels, const ServerUncorePowerState * uncState1, const ServerUncorePowerState * uncState2, uint64 elapsedTime, int rankA, int rankB)
+{
+    for (uint32 channel = 0; channel < num_imc_channels; ++channel) {
+        if(rankA >= 0) {
+          for (uint32 i=skt; i<(skt+no_columns); ++i) {
+              cout << "|-- Mem Ch "<<setw(2)<<channel<<" R " << setw(1) << rankA <<": Reads (MB/s): "<<setw(8)<<(float) (getMCCounter(channel,READ_RANK_A,uncState1[i],uncState2[i]) * 64 / 1000000.0 / (elapsedTime/1000.0))<<" --|";
+          }
+          cout << endl;
+          for (uint32 i=skt; i<(skt+no_columns); ++i) {
+              cout << "|--                Writes(MB/s): "<<setw(8)<<(float) (getMCCounter(channel,WRITE_RANK_A,uncState1[i],uncState2[i]) * 64 / 1000000.0 / (elapsedTime/1000.0))<<" --|";
+          }
+          cout << endl;
+        }
+        if(rankB >= 0) {
+          for (uint32 i=skt; i<(skt+no_columns); ++i) {
+              cout << "|-- Mem Ch "<<setw(2) << channel<<" R " << setw(1) << rankB <<": Reads (MB/s): "<<setw(8)<<(float) (getMCCounter(channel,READ_RANK_B,uncState1[i],uncState2[i]) * 64 / 1000000.0 / (elapsedTime/1000.0))<<" --|";
+          }
+          cout << endl;
+          for (uint32 i=skt; i<(skt+no_columns); ++i) {
+              cout << "|--                Writes(MB/s): "<<setw(8)<<(float) (getMCCounter(channel,WRITE_RANK_B,uncState1[i],uncState2[i]) * 64 / 1000000.0 / (elapsedTime/1000.0))<<" --|";
+          }
+          cout << endl;
+        }
+    }
+}
+
+void printSocketBWFooter(uint32 no_columns, uint32 skt, float* iMC_Rd_socket, float* iMC_Wr_socket, uint64* partial_write)
+{
+    for (uint32 i=skt; i<(skt+no_columns); ++i) {
+        cout << "|-- NODE"<<setw(2)<<i<<" Mem Read (MB/s) : "<<setw(8)<<iMC_Rd_socket[i]<<" --|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(skt+no_columns); ++i) {
+        cout << "|-- NODE"<<setw(2)<<i<<" Mem Write(MB/s) : "<<setw(8)<<iMC_Wr_socket[i]<<" --|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(skt+no_columns); ++i) {
+        cout << "|-- NODE"<<setw(2)<<i<<" P. Write (T/s): "<<dec<<setw(10)<<partial_write[i]<<" --|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(skt+no_columns); ++i) {
+        cout << "|-- NODE"<<setw(2)<<i<<" Memory (MB/s): "<<setw(11)<<std::right<<iMC_Rd_socket[i]+iMC_Wr_socket[i]<<" --|";
+    }
+    cout << endl;
+    for (uint32 i=skt; i<(no_columns+skt); ++i) {
+        cout << "|---------------------------------------|";
+    }
+    cout << endl;
+}
+
+void display_bandwidth(float *iMC_Rd_socket_chan, float *iMC_Wr_socket_chan, float *iMC_Rd_socket, float *iMC_Wr_socket, uint32 numSockets, uint32 num_imc_channels, uint64 *partial_write, uint32 no_columns )
 {
     float sysRead = 0.0, sysWrite = 0.0;
     uint32 skt = 0;
@@ -79,85 +208,48 @@ void display_bandwidth(float *iMC_Rd_socket_chan, float *iMC_Wr_socket_chan, flo
 
     while(skt < numSockets)
     {
-        if(!(skt % 2) && ((skt+1) < numSockets)) //This is even socket, and it has at least one more socket which can be displayed together
+        // Full row
+        if ( (skt+no_columns) <= numSockets )
         {
-            cout << "\
-                \r---------------------------------------||---------------------------------------\n\
-                \r--             Socket "<<skt<<"              --||--             Socket "<<skt+1<<"              --\n\
-                \r---------------------------------------||---------------------------------------\n\
-                \r---------------------------------------||---------------------------------------\n\
-                \r---------------------------------------||---------------------------------------\n\
-                \r--   Memory Performance Monitoring   --||--   Memory Performance Monitoring   --\n\
-                \r---------------------------------------||---------------------------------------\n\
-                \r"; 
-            for(uint64 channel = 0; channel < num_imc_channels; ++channel)
-            {
-                if(iMC_Rd_socket_chan[skt*num_imc_channels+channel] < 0.0 && iMC_Wr_socket_chan[skt*num_imc_channels+channel] < 0.0) //If the channel read neg. value, the channel is not working; skip it.
-                    continue;
-                std::cout << "\r--  Mem Ch "
-                    <<channel
-                    <<": Reads (MB/s):"
-                    <<setw(8)
-                    <<iMC_Rd_socket_chan[skt*num_imc_channels+channel];
-                cout <<"  --||--  Mem Ch "
-                    <<channel
-                    <<": Reads (MB/s):"
-                    <<setw(8)
-                    <<iMC_Rd_socket_chan[(skt+1)*num_imc_channels+channel]
-                    <<"  --"
-                    <<endl;
-                cout << "\r--            Writes(MB/s):"
-                    <<setw(8)
-                    <<iMC_Wr_socket_chan[skt*num_imc_channels+channel];
-                cout <<"  --||--            Writes(MB/s):"
-                    <<setw(8)
-                    <<iMC_Wr_socket_chan[(skt+1)*num_imc_channels+channel]
-                    <<"  --"
-                    <<endl;
+            printSocketBWHeader (no_columns, skt);
+            printSocketChannelBW(no_columns, skt, num_imc_channels, iMC_Rd_socket_chan, iMC_Wr_socket_chan);
+            printSocketBWFooter (no_columns, skt, iMC_Rd_socket, iMC_Wr_socket, partial_write);
+            for (uint32 i=skt; i<(skt+no_columns); i++) {
+                sysRead += iMC_Rd_socket[i];
+                sysWrite += iMC_Wr_socket[i];
             }
-            cout << "\
-                \r-- NODE"<<skt<<" Mem Read (MB/s):  "<<setw(8)<<iMC_Rd_socket[skt]<<"  --||-- NODE"<<skt+1<<" Mem Read (MB/s):  "<<setw(8)<<iMC_Rd_socket[skt+1]<<"  --\n\
-                \r-- NODE"<<skt<<" Mem Write (MB/s): "<<setw(8)<<iMC_Wr_socket[skt]<<"  --||-- NODE"<<skt+1<<" Mem Write (MB/s): "<<setw(8)<<iMC_Wr_socket[skt+1]<<"  --\n\
-                \r-- NODE"<<skt<<" P. Write (T/s) :"<<dec<<setw(10)<<partial_write[skt]<<"  --||-- NODE"<<skt+1<<" P. Write (T/s): "<<dec<<setw(10)<<partial_write[skt+1]<<"  --\n\
-                \r-- NODE"<<skt<<" Memory (MB/s): "<<setw(11)<<std::right<<iMC_Rd_socket[skt]+iMC_Wr_socket[skt]<<"  --||-- NODE"<<skt+1<<" Memory (MB/s): "<<setw(11)<<iMC_Rd_socket[skt+1]+iMC_Wr_socket[skt+1]<<"  --\n\
-                \r";
-           sysRead += iMC_Rd_socket[skt];
-           sysRead += iMC_Rd_socket[skt+1];
-           sysWrite += iMC_Wr_socket[skt];
-           sysWrite += iMC_Wr_socket[skt+1];
-           skt += 2;
+            skt += no_columns;
         }
         else //Display one socket in this row
         {
             cout << "\
-                \r---------------------------------------|\n\
-                \r--             Socket "<<skt<<"              --|\n\
-                \r---------------------------------------|\n\
-                \r---------------------------------------|\n\
-                \r---------------------------------------|\n\
-                \r--   Memory Performance Monitoring   --|\n\
-                \r---------------------------------------|\n\
+                \r|---------------------------------------|\n\
+                \r|--             Socket "<<skt<<"              --|\n\
+                \r|---------------------------------------|\n\
+                \r|--     Memory Channel Monitoring     --|\n\
+                \r|---------------------------------------|\n\
                 \r"; 
             for(uint64 channel = 0; channel < num_imc_channels; ++channel)
             {
                 if(iMC_Rd_socket_chan[skt*num_imc_channels+channel] < 0.0 && iMC_Wr_socket_chan[skt*num_imc_channels+channel] < 0.0) //If the channel read neg. value, the channel is not working; skip it.
                     continue;
-                cout << "--  Mem Ch "
+                cout << "|--  Mem Ch "
                     <<channel
                     <<": Reads (MB/s):"
                     <<setw(8)
                     <<iMC_Rd_socket_chan[skt*num_imc_channels+channel]
-                    <<"  --|\n--            Writes(MB/s):"
+                    <<"  --|\n|--            Writes(MB/s):"
                     <<setw(8)
                     <<iMC_Wr_socket_chan[skt*num_imc_channels+channel]
                     <<"  --|\n";
 
             }
             cout << "\
-                \r-- NODE"<<skt<<" Mem Read (MB/s):  "<<setw(8)<<iMC_Rd_socket[skt]<<"  --|\n\
-                \r-- NODE"<<skt<<" Mem Write (MB/s) :"<<setw(8)<<iMC_Wr_socket[skt]<<"  --|\n\
-                \r-- NODE"<<skt<<" P. Write (T/s) :"<<setw(10)<<dec<<partial_write[skt]<<"  --|\n\
-                \r-- NODE"<<skt<<" Memory (MB/s): "<<setw(8)<<iMC_Rd_socket[skt]+iMC_Wr_socket[skt]<<"     --|\n\
+                \r|-- NODE"<<skt<<" Mem Read (MB/s):  "<<setw(8)<<iMC_Rd_socket[skt]<<"  --|\n\
+                \r|-- NODE"<<skt<<" Mem Write (MB/s) :"<<setw(8)<<iMC_Wr_socket[skt]<<"  --|\n\
+                \r|-- NODE"<<skt<<" P. Write (T/s) :"<<setw(10)<<dec<<partial_write[skt]<<"  --|\n\
+                \r|-- NODE"<<skt<<" Memory (MB/s): "<<setw(8)<<iMC_Rd_socket[skt]+iMC_Wr_socket[skt]<<"     --|\n\
+                \r|---------------------------------------|\n\
                 \r";
 
             sysRead += iMC_Rd_socket[skt];
@@ -166,11 +258,11 @@ void display_bandwidth(float *iMC_Rd_socket_chan, float *iMC_Wr_socket_chan, flo
         }
     }
     cout << "\
-        \r---------------------------------------||---------------------------------------\n\
-        \r--                   System Read Throughput(MB/s):"<<setw(10)<<sysRead<<"                  --\n\
-        \r--                  System Write Throughput(MB/s):"<<setw(10)<<sysWrite<<"                  --\n\
-        \r--                 System Memory Throughput(MB/s):"<<setw(10)<<sysRead+sysWrite<<"                  --\n\
-        \r---------------------------------------||---------------------------------------" << endl;
+        \r|---------------------------------------||---------------------------------------|\n\
+        \r|--                   System Read Throughput(MB/s):"<<setw(10)<<sysRead<<"                  --|\n\
+        \r|--                  System Write Throughput(MB/s):"<<setw(10)<<sysWrite<<"                  --|\n\
+        \r|--                 System Memory Throughput(MB/s):"<<setw(10)<<sysRead+sysWrite<<"                  --|\n\
+        \r|---------------------------------------||---------------------------------------|" << endl;
 }
 
 void display_bandwidth_csv_header(float *iMC_Rd_socket_chan, float *iMC_Wr_socket_chan, float *iMC_Rd_socket, float *iMC_Wr_socket, uint32 numSockets, uint32 num_imc_channels, uint64 *partial_write)
@@ -251,7 +343,7 @@ void display_bandwidth_csv(float *iMC_Rd_socket_chan, float *iMC_Wr_socket_chan,
 const uint32 max_sockets = 256;
 const uint32 max_imc_channels = 8;
 
-void calculate_bandwidth(PCM *m, const ServerUncorePowerState uncState1[], const ServerUncorePowerState uncState2[], uint64 elapsedTime, bool csv, bool & csvheader)
+void calculate_bandwidth(PCM *m, const ServerUncorePowerState uncState1[], const ServerUncorePowerState uncState2[], uint64 elapsedTime, bool csv, bool & csvheader, uint32 no_columns)
 {
     //const uint32 num_imc_channels = m->getMCChannelsPerSocket();
     float iMC_Rd_socket_chan[max_sockets][max_imc_channels];
@@ -292,7 +384,70 @@ void calculate_bandwidth(PCM *m, const ServerUncorePowerState uncState1[], const
       }
       display_bandwidth_csv(iMC_Rd_socket_chan[0], iMC_Wr_socket_chan[0], iMC_Rd_socket, iMC_Wr_socket, m->getNumSockets(), max_imc_channels, partial_write, elapsedTime);
     } else {
-      display_bandwidth(iMC_Rd_socket_chan[0], iMC_Wr_socket_chan[0], iMC_Rd_socket, iMC_Wr_socket, m->getNumSockets(), max_imc_channels, partial_write);
+      display_bandwidth(iMC_Rd_socket_chan[0], iMC_Wr_socket_chan[0], iMC_Rd_socket, iMC_Wr_socket, m->getNumSockets(), max_imc_channels, partial_write, no_columns);
+    }
+}
+
+void calculate_bandwidth(PCM *m, const ServerUncorePowerState uncState1[], const ServerUncorePowerState uncState2[], uint64 elapsedTime, bool csv, bool & csvheader, uint32 no_columns, int rankA, int rankB)
+{
+    uint32 skt = 0;
+    cout.setf(ios::fixed);
+    cout.precision(2);
+    uint32 numSockets = m->getNumSockets();
+
+    while(skt < numSockets)
+    {
+        // Full row
+        if ( (skt+no_columns) <= numSockets )
+        {
+            printSocketRankBWHeader(no_columns, skt);
+            printSocketChannelBW(no_columns, skt, max_imc_channels, uncState1, uncState2, elapsedTime, rankA, rankB);
+            for (uint32 i=skt; i<(no_columns+skt); ++i) {
+              cout << "|-------------------------------------------|";
+            }
+            cout << endl;
+            skt += no_columns;
+        }
+        else //Display one socket in this row
+        {
+            cout << "\
+                \r|-------------------------------------------|\n\
+                \r|--               Socket "<<skt<<"                --|\n\
+                \r|-------------------------------------------|\n\
+                \r|--           DIMM Rank Monitoring        --|\n\
+                \r|-------------------------------------------|\n\
+                \r";
+            for(uint64 channel = 0; channel < max_imc_channels; ++channel)
+            {
+                if(rankA >=0)
+                  cout << "|-- Mem Ch "
+                      << setw(2) << channel
+                      << " R " << setw(1) << rankA
+                      <<": Reads (MB/s):"
+                      <<setw(8)
+                      <<(float) (getMCCounter(channel,READ_RANK_A,uncState1[skt],uncState2[skt]) * 64 / 1000000.0 / (elapsedTime/1000.0))
+                      <<"  --|\n|--                Writes(MB/s):"
+                      <<setw(8)
+                      <<(float) (getMCCounter(channel,WRITE_RANK_A,uncState1[skt],uncState2[skt]) * 64 / 1000000.0 / (elapsedTime/1000.0))
+                      <<"  --|\n";
+                if(rankB >=0)
+                  cout << "|-- Mem Ch "
+                      << setw(2) << channel
+                      << " R " << setw(1) << rankB
+                      <<": Reads (MB/s):"
+                      <<setw(8)
+                      <<(float) (getMCCounter(channel,READ_RANK_B,uncState1[skt],uncState2[skt]) * 64 / 1000000.0 / (elapsedTime/1000.0))
+                      <<"  --|\n|--                Writes(MB/s):"
+                      <<setw(8)
+                      <<(float) (getMCCounter(channel,WRITE_RANK_B,uncState1[skt],uncState2[skt]) * 64 / 1000000.0 / (elapsedTime/1000.0))
+                      <<"  --|\n";
+            }
+            cout << "\
+                \r|-------------------------------------------|\n\
+                \r";
+
+            skt += 1;
+        }
     }
 }
 
@@ -315,16 +470,20 @@ int main(int argc, char * argv[])
     cerr << endl;
     cerr << " Intel(r) Performance Counter Monitor: Memory Bandwidth Monitoring Utility " << INTEL_PCM_VERSION << endl;
     cerr << endl;
-    cerr << " Copyright (c) 2009-2014 Intel Corporation" << endl;
-    cerr << " This utility measures memory bandwidth per channel in real-time" << endl;
+    cerr << INTEL_PCM_COPYRIGHT << endl;
+    cerr << " This utility measures memory bandwidth per channel or per DIMM rank in real-time" << endl;
     cerr << endl;
 
     double delay = -1.0;
     bool csv = false, csvheader=false;
+    uint32 no_columns = DEFAULT_DISPLAY_COLUMNS; // Default number of columns is 2
     char * sysCmd = NULL;
     char ** sysArgv = NULL;
+#ifndef _MSC_VER
     long diff_usec = 0; // deviation of clock is useconds between measurements
     int calibrated = PCM_CALIBRATION_INTERVAL - 2; // keeps track is the clock calibration needed
+#endif
+    int rankA = -1, rankB = -1;
     string program = string(argv[0]);
 
     PCM * m = PCM::getInstance();
@@ -352,6 +511,45 @@ int main(int argc, char * argv[])
                 string filename = cmd.substr(found+1);
                 if (!filename.empty()) {
                     m->setOutput(filename);
+                }
+            }
+            continue;
+        }
+        else
+        if (strncmp(*argv, "-columns", 8) == 0 ||
+            strncmp(*argv, "/columns", 8) == 0)
+        {
+            string cmd = string(*argv);
+            size_t found = cmd.find('=',2);
+            if (found != string::npos) {
+                no_columns = atoi(cmd.substr(found+1).c_str());
+                if (no_columns == 0)
+                    no_columns = DEFAULT_DISPLAY_COLUMNS;
+                if (no_columns > m->getNumSockets())
+                    no_columns = m->getNumSockets();
+            }
+            continue;
+        }
+        if (strncmp(*argv, "-rank", 5) == 0 ||
+            strncmp(*argv, "/rank", 5) == 0)
+        {
+            string cmd = string(*argv);
+            size_t found = cmd.find('=',2);
+            if (found != string::npos) {
+                int rank = atoi(cmd.substr(found+1).c_str());
+                if (rankA >= 0 && rankB >= 0)
+                {
+                  std::cerr << "At most two DIMM ranks can be monitored "<< std::endl;
+                  exit(EXIT_FAILURE);
+                }
+                else
+                {
+                  if(rank > 7) {
+                      std::cerr << "Invalid rank number "<<rank << std::endl;
+                      exit(EXIT_FAILURE);
+                  }
+                  if(rankA < 0) rankA = rank;
+                  else if(rankB < 0) rankB = rank;
                 }
             }
             continue;
@@ -405,7 +603,7 @@ int main(int argc, char * argv[])
     } while(argc > 1); // end of command line partsing loop
 
     m->disableJKTWorkaround();
-    PCM::ErrorCode status = m->program();
+    PCM::ErrorCode status = m->programServerUncoreMemoryMetrics(rankA, rankB);
     switch (status)
     {
         case PCM::Success:
@@ -514,7 +712,10 @@ int main(int argc, char * argv[])
 	  cout << "Called sleep function for "<<dec<<fixed<<delay_ms<<" ms\n";
 	}
 
-        calculate_bandwidth(m,BeforeState,AfterState,AfterTime-BeforeTime,csv,csvheader);
+        if(rankA >= 0 || rankB >= 0)
+          calculate_bandwidth(m,BeforeState,AfterState,AfterTime-BeforeTime,csv,csvheader, no_columns, rankA, rankB);
+        else
+          calculate_bandwidth(m,BeforeState,AfterState,AfterTime-BeforeTime,csv,csvheader, no_columns);
 
         swap(BeforeTime, AfterTime);
         swap(BeforeState, AfterState);

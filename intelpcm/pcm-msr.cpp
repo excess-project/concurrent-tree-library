@@ -51,6 +51,7 @@ void print_usage(const char * progname)
 int main(int argc, char * argv[])
 {
     std::cout << "\n Intel(r) Performance Counter Monitor " << INTEL_PCM_VERSION << std::endl;
+    std::cout << INTEL_PCM_COPYRIGHT << std::endl;
     std::cout << "\n MSR read/write utility\n\n";
     
     uint64 value = 0;
@@ -101,20 +102,26 @@ int main(int argc, char * argv[])
     // drv.stop();     // restart driver (usually not needed)
     if (!drv.start(driverPath))
     {
-		std::cout << "Can not load MSR driver." << std::endl;
-		std::cout << "You must have signed msr.sys driver in your current directory and have administrator rights to run this program" << std::endl;
+		std::cerr << "Can not load MSR driver." << std::endl;
+		std::cerr << "You must have signed msr.sys driver in your current directory and have administrator rights to run this program" << std::endl;
         return -1;
     }
     #endif
-
-    MsrHandle h(core);
-    if(!dec) std::cout << std::hex << std::showbase;
-    if(write)
-    {
-        std::cout << " Writing "<< value << " to MSR "<< msr << " on core "<< core << std::endl;
-        h.write(msr,value);
+    try {
+        MsrHandle h(core);
+        if (!dec) std::cout << std::hex << std::showbase;
+        if (write)
+        {
+            std::cout << " Writing " << value << " to MSR " << msr << " on core " << core << std::endl;
+            h.write(msr, value);
+        }
+        value = 0;
+        h.read(msr, &value);
+        std::cout << " Read value " << value << " from MSR " << msr << " on core " << core << "\n" << std::endl;
     }
-    value = 0;
-    h.read(msr,&value);
-    std::cout << " Read value "<< value << " from MSR "<< msr << " on core "<< core << "\n" << std::endl;
+    catch (std::exception & e)
+    {
+        std::cerr << "Error accessing MSRs: " << e.what() << std::endl;
+        std::cerr << "Please check if the program can access MSR drivers." << std::endl;
+    }
 }
