@@ -1,5 +1,8 @@
-#ifndef micpower_h
-#define micpower_h
+/*
+ 
+ Credits: Qingpeng N. (https://software.intel.com/en-us/forums/intel-many-integrated-core/topic/507670)
+ 
+ */
 
 // -sh-4.2$ cat /sys/class/micras/power
 // 104000000  //Total power, win 0 uW
@@ -18,6 +21,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <pthread.h>
+#include <sys/time.h>
 
 #define MICPOWER_MAX_COUNTERS 16
 typedef struct MICPOWER_control_state {
@@ -45,6 +50,13 @@ static int read_sysfs_file(long long* counts) {
 volatile unsigned keepAlive = 1;
 double passEnergy = 0.0;
 void* recordEnergy(void *arg) {
+
+   struct timeval t1, t2;
+   double elapsedTime;
+
+   gettimeofday(&t1, NULL);
+
+
   int retval = 0;
     long long counts[MICPOWER_MAX_COUNTERS];    // used for caching
   struct timespec ts;
@@ -56,10 +68,21 @@ void* recordEnergy(void *arg) {
     energy += counts[0];
     nanosleep(&ts, NULL);
   }
+
+  gettimeofday(&t2, NULL);
+
   keepAlive = 1;
+  
+  elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
+  elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
+
   passEnergy = energy;
-  printf("Energy used in %lf\n", energy * 50.0 / 1000 / 1000 / 1000);
+  printf("#D,ENERGY_MIC,%lf\n", energy * 50.0 / 1000 / 1000 / 1000);
+  printf("#D,TIME,%lf\n", elapsedTime);
+
   energy = 0.0;
+
+  return arg;
 }
 
 pthread_t micPthread;
@@ -72,5 +95,3 @@ double micpower_finalize() {
   pthread_join(micPthread, NULL);
   return passEnergy * 50.0 / 1000 / 1000 / 1000;
 }
-
-#endif
