@@ -1,7 +1,3 @@
-CMN_INC	:= ../common
-
-ARCH:=$(shell uname -p)
-
 #Location of profiler library and include (e.g., PAPI)
 PROF_LIB:= /opt/papi/5.4.1/lib
 PROF_INC:= /opt/papi/5.4.1/include
@@ -11,6 +7,12 @@ PCM_DIR:= /opt/tools/intel-pcm/2.7
 
 #Location of GEM5
 GEM5_DIR := ../m5
+
+#-------------------- END OF USER-CONFIGURABLE OPTIONS --------------------------------
+
+CMN_INC	:= ../common
+
+ARCH:=$(shell uname -p)
 
 #Addon (default) files
 ADDONS	:= ${CMN_INC}/barrier.c ${CMN_INC}/locks.c ${CMN_INC}/bench.c
@@ -71,16 +73,23 @@ PROF_OBJS += ${SRCPROF:.c=.o.prof} ${SRCS:.c=.o.prof} ${ADDONS:.c=.o.prof}
 PROF_CCFLAGS += ${ADDFLAG}
 PROF_LDFLAGS += ${ADDLD} ${PROFLIB}
 
+#Precompiled objects
+ifdef PREC
+PREC_ENE := ${PREC}.ene
+PREC_PROF := ${PREC}.prof
+endif
 
-#BUILD
+
+#BUILD ----------------------------------------------------
 
 .PHONY: all clean
-all:: copy_obj ${TARGET} ${TARGET}.energy ${TARGET}.profile 
+all:: prep ${TARGET} ${TARGET}.energy ${TARGET}.profile 
 
 #Plain
 
-copy_obj:
-	cp ./obj/* .
+prep:
+	cp ./obj/* . | true
+	rm ../common/*.o ../common/*.o.ene ../common/*.o.prof | true
 
 ${TARGET}: ${OBJS}
 	${CC} ${LDFLAGS} -o $@ $^ ${PREC} ${LIBS} 
@@ -91,7 +100,7 @@ ${OBJS}: %.o: %.c
 #Energy
 
 ${TARGET}.energy: ${ENE_OBJS}
-	${ENE_CC} ${ENE_LDFLAGS} ${LDFLAGS} -o $@ $^ ${PREC}.ene ${LIBS} 
+	${ENE_CC} ${ENE_LDFLAGS} ${LDFLAGS} -o $@ $^ ${PREC_ENE} ${LIBS} 
 
 ${ENE_OBJS}: %.o.ene: %.c
 	${ENE_CC} ${ENE_CCFLAGS} ${CCFLAGS} ${TREE} -o $@ -c $< 
@@ -99,7 +108,7 @@ ${ENE_OBJS}: %.o.ene: %.c
 #Profile
 
 ${TARGET}.profile: ${PROF_OBJS}
-	${CC} ${PROF_LDFLAGS} ${LDFLAGS} -o $@ $^ ${PREC}.prof ${LIBS} 
+	${CC} ${PROF_LDFLAGS} ${LDFLAGS} -o $@ $^ ${PREC_PROF} ${LIBS} 
 
 ${PROF_OBJS}: %.o.prof: %.c
 	${CC} ${PROF_CCFLAGS} ${CCFLAGS} ${TREE} -o $@ -c $< 
