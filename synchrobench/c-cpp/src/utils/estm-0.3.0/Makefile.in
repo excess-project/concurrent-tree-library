@@ -9,7 +9,7 @@ SOLARIS_CC ?= gcc
 ifeq ($(VERSION),DEBUG)
      CFLAGS 	+= -g -DDEBUG -O0
 else
-     CFLAGS 	+= -O2 -DNDEBUG
+     CFLAGS 	+= -O3 -DNDEBUG
 endif
 
 ROOT ?= .

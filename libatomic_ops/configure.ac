@@ -67,7 +67,7 @@ else
     *-*-hpux*)
       AC_MSG_RESULT("+Z")
       PICFLAG="+Z"
-      CFLAGS="+O2 -mt $CFLAGS"
+      CFLAGS="+O3 -mt $CFLAGS"
       ;;
     *-*-solaris*)
       AC_MSG_RESULT(-Kpic)

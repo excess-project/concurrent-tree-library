@@ -26,7 +26,7 @@ test.o: citrus.h urcu.h
 
 main: new_urcu.o citrus.o test.o urcu.h
 	$(CC) $(CFLAGS) $(BUILDIR)/new_urcu.o $(BUILDIR)/citrus.o $(BUILDIR)/test.o -o $(BINS) $(LDFLAGS)
-	$(CXX) $(CFLAGS) $(BUILDIR)/new_urcu.pcm.o $(BUILDIR)/citrus.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).pcm" $(LDFLAGS)
+	$(CXX) $(CFLAGS) $(BUILDIR)/new_urcu.pcm.o $(BUILDIR)/citrus.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).energy" $(LDFLAGS)
 
 clean:
 	-rm -f $(BINS)

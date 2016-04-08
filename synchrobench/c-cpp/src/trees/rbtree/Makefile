@@ -29,7 +29,7 @@ test.o: rbtree.o intset.h
 
 main: intset.o test.o $(PCMS)
 	$(CC) $(CFLAGS) $(BUILDIR)/intset.o $(BUILDIR)/test.o -o $(BINS) $(LDFLAGS)
-	$(CXX) $(CFLAGS) -D__USEPCM $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).pcm" $(LDFLAGS)
+	$(CXX) $(CFLAGS) -D__USEPCM $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).energy" $(LDFLAGS)
 
 clean:
 	-rm -f $(BINS) *.o

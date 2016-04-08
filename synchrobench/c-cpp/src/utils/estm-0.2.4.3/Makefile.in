@@ -22,7 +22,7 @@ TMLIB = $(LIBDIR)/lib$(TM).a
 
 # Debug/optimization flags
 #CFLAGS += -g -DNDEBUG
-CFLAGS += -O2 -DNDEBUG
+CFLAGS += -O3 -DNDEBUG
 
 TM = stm
 

@@ -16,7 +16,7 @@ CFLAGS += -std=gnu++0x
 
 main: test.o
 	$(CC) $(CFLAGS) test.o -o $(BINS) $(LDFLAGS)
-	$(CXX) $(CFLAGS) test.pcm.o $(PCMS) -o "$(BINS).pcm" $(LDFLAGS)
+	$(CXX) $(CFLAGS) test.pcm.o $(PCMS) -o "$(BINS).energy" $(LDFLAGS)
 
 test.o: wfrbt.h test.c
 	$(CC) $(CFLAGS) -c test.c

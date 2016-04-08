@@ -49,7 +49,7 @@ test.o: sftree.h intset.h
 
 main: sftree.o intset.o test.o $(PCMS)
 	$(CC) $(CFLAGS) $(BUILDIR)/sftree.o $(BUILDIR)/intset.o $(BUILDIR)/test.o -o $(BINS) $(LDFLAGS)
-	$(CXX) $(CFLAGS) -D__USEPCM $(BUILDIR)/sftree.pcm.o $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).pcm" $(LDFLAGS)
+	$(CXX) $(CFLAGS) -D__USEPCM $(BUILDIR)/sftree.pcm.o $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).energy" $(LDFLAGS)
 
 #test_move.o: sftree.h intset.h
 #	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test_move.o test_move.c
