@@ -1,14 +1,22 @@
 /*
- CBTree - Lehman & Yao Concurrent Btree
- 
- Copyright 2013 Ibrahim Umar, University of Tromsø.
- 
- 
- Adapted from:
- bpt:  B+ Tree Implementation version 1.13
+ main.c
 
- Original copyright below:
+ CBTree - A concurrent B+Tree based on Lehman & Yao paper
  
+ by Ibrahim Umar
+
+ Based on the bpt: B+ Tree implementation
+ 
+ bpt copyright is as below:
+
+ */
+
+
+/*
+ *  bpt.c
+ */
+#define Version "1.13"
+/*
  *
  *  bpt:  B+ Tree Implementation
  *  Copyright (C) 2010  Amittai Aviram  http://www.amittai.com
@@ -52,22 +60,14 @@
 
 // Uncomment the line below if you are compiling on Windows.
 // #define WINDOWS
-#define _GNU_SOURCE
-#include <sched.h>
-
-#include <unistd.h>
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
-
 #include <pthread.h>
 
-
-#ifdef __USEPCM
-#include "../benchcounters.h"
-#endif
-
+#include <sys/time.h>
+#include "common.h"
+#include "locks.h"
 
 #ifdef WINDOWS
 #define bool char
@@ -93,117 +93,6 @@
 #define LICENSE_CONDITIONS_START 70
 #define LICENSE_CONDITIONS_END 625
 
-
-
-//Helper pthread spinlock function for MAC OS X (SLOW!!!)
-#if  defined(__APPLE__) && defined(__MACH__)
-
-#include <libkern/OSAtomic.h>
-
-typedef volatile OSSpinLock pthread_spinlock_t;
-
-#ifndef PTHREAD_PROCESS_SHARED
-# define PTHREAD_PROCESS_SHARED 1
-#endif
-#ifndef PTHREAD_PROCESS_PRIVATE
-# define PTHREAD_PROCESS_PRIVATE 2
-#endif
-
-static inline int pthread_spin_init(pthread_spinlock_t *lock, int pshared) {
-	*lock = OS_SPINLOCK_INIT;
-	return 0;
-}
-
-static inline int pthread_spin_destroy(pthread_spinlock_t *lock) {
-	return 0;
-}
-
-static inline int pthread_spin_lock(pthread_spinlock_t *lock) {
-	OSSpinLockLock(lock);
-    return 0;
-}
-
-static inline int pthread_spin_trylock(pthread_spinlock_t *lock) {
-	return !OSSpinLockTry(lock);
-}
-
-static inline int pthread_spin_unlock(pthread_spinlock_t *lock) {
-	OSSpinLockUnlock(lock);
-	return 0;
-}
-
-#ifndef PTHREAD_BARRIER_H_
-#define PTHREAD_BARRIER_H_
-
-#include <pthread.h>
-#include <errno.h>
-
-typedef int pthread_barrierattr_t;
-typedef struct
-{
-    pthread_mutex_t mutex;
-    pthread_cond_t cond;
-    int count;
-    int tripCount;
-} pthread_barrier_t;
-
-
-int pthread_barrier_init(pthread_barrier_t *barrier, const pthread_barrierattr_t *attr, unsigned int count)
-{
-    if(count == 0)
-    {
-        errno = EINVAL;
-        return -1;
-    }
-    if(pthread_mutex_init(&barrier->mutex, 0) < 0)
-    {
-        return -1;
-    }
-    if(pthread_cond_init(&barrier->cond, 0) < 0)
-    {
-        pthread_mutex_destroy(&barrier->mutex);
-        return -1;
-    }
-    barrier->tripCount = count;
-    barrier->count = 0;
-    
-    return 0;
-}
-
-int pthread_barrier_destroy(pthread_barrier_t *barrier)
-{
-    pthread_cond_destroy(&barrier->cond);
-    pthread_mutex_destroy(&barrier->mutex);
-    return 0;
-}
-
-int pthread_barrier_wait(pthread_barrier_t *barrier)
-{
-    pthread_mutex_lock(&barrier->mutex);
-    ++(barrier->count);
-    if(barrier->count >= barrier->tripCount)
-    {
-        barrier->count = 0;
-        pthread_cond_broadcast(&barrier->cond);
-        pthread_mutex_unlock(&barrier->mutex);
-        return 1;
-    }
-    else
-    {
-        pthread_cond_wait(&barrier->cond, &(barrier->mutex));
-        pthread_mutex_unlock(&barrier->mutex);
-        return 0;
-    }
-}
-
-#endif // PTHREAD_BARRIER_H_
-
-#endif
-//END: Helper pthread spinlock function for MAC OS X
-
-pthread_barrier_t bench_barrier;
-
-#define __THREAD_PINNING 1
 
 // TYPES.
 
@@ -249,6 +138,7 @@ typedef struct record {
  * to data is always num_keys.  The
  * last leaf pointer points to the next leaf.
  */
+/*
 typedef struct node {
     
 	void ** pointers;
@@ -263,7 +153,7 @@ typedef struct node {
     int high_key;
     
 } node;
-
+*/
 
 // GLOBALS.
 
@@ -296,6 +186,8 @@ bool verbose_output = false;
 // GLOBAL LOCK
 pthread_spinlock_t global_lock;
 
+// GLOBAL ROOT
+//node * root;
 
 // FUNCTION PROTOTYPES.
 
@@ -345,7 +237,6 @@ node * coalesce_nodes(node * root, node * n, node * neighbor, int neighbor_index
 node * redistribute_nodes(node * root, node * n, node * neighbor, int neighbor_index,
                           int k_prime_index, int k_prime);
 node * delete_entry( node * root, node * n, int key, void * pointer );
-node * _delete( node * root, int key );
 
 
 /*---------------START PARALEL------------------*/
@@ -471,6 +362,9 @@ struct node* move_right(int key, struct node* t)
 int insert_par( node ** root, int key, int value ) {
     
 	record * pointer;
+
+	node* oldroot;
+	
 	node *temp = NULL, *current = NULL, *new_leaf = NULL, *old_leaf = NULL, *child = NULL;
 
     int * temp_keys;
@@ -483,13 +377,21 @@ int insert_par( node ** root, int key, int value ) {
 	 */
     
 	if (*root == NULL){
+		//printf("Try\n");
         //Try lock the global tree
         if(pthread_spin_trylock(&global_lock)==0){
-            pointer = make_record(value);
-            *root = start_new_tree(key, pointer);
-            pthread_spin_unlock(&global_lock);
-            return 1;
+			if(*root == NULL){
+				//printf("Proceed\n");
+        		pointer = make_record(value);
+        		*root = start_new_tree(key, pointer);
+        		pthread_spin_unlock(&global_lock);
+        		return 1;
+			}else{
+				pthread_spin_unlock(&global_lock);
+				//printf("LEaf?%d\n", (*root)->is_leaf);
+			}
         }else{
+			//printf("Wait\n");
             //Wait here first
             while(global_lock!=0){};
         }
@@ -500,6 +402,7 @@ int insert_par( node ** root, int key, int value ) {
     Stack_Init(&Nstack);
     
     current = *root;
+	oldroot = current;
     
     while (!current->is_leaf) {
         temp = current;
@@ -723,31 +626,35 @@ int insert_par( node ** root, int key, int value ) {
             //Now we have to create a new root, restrict only 1 thread
             if(Nstack.size == 0){
                 if(pthread_spin_trylock(&global_lock)==0){
-                    *root = make_node();
-                    (*root)->keys[0] = key;
-                    (*root)->pointers[0] = old_leaf;
-                    (*root)->pointers[1] = new_leaf;
-                    (*root)->num_keys++;
-                    (*root)->parent = NULL;
-                    current->parent = *root;
-                    new_leaf->parent = *root;
-                    pthread_spin_unlock(&old_leaf->lock);
-                    pthread_spin_unlock(&global_lock);
-                    return 1;
+					if(oldroot == *root){
+						*root = make_node();
+                		(*root)->keys[0] = key;
+                		(*root)->pointers[0] = old_leaf;
+                		(*root)->pointers[1] = new_leaf;
+                		(*root)->num_keys++;
+                		(*root)->parent = NULL;
+                		current->parent = *root;
+                		new_leaf->parent = *root;
+                		pthread_spin_unlock(&old_leaf->lock);
+                		pthread_spin_unlock(&global_lock);
+                		return 1;
+					}else{
+						oldroot = *root;
+						current = oldroot;
+						pthread_spin_unlock(&global_lock);
+					}
                 }else{
                     //Others wait here first
                     while(global_lock!=0){};
                 }
-            }
-            
-            current = Stack_Pop(&Nstack);
-            
+            }else
+				current = Stack_Pop(&Nstack);
+
             pthread_spin_lock(&current->lock);
             
             move_right(key, current);
-            
-            pthread_spin_unlock(&old_leaf->lock);
-            
+			
+            pthread_spin_unlock(&old_leaf->lock);            
 
         }
     }
@@ -766,6 +673,8 @@ int delete_par(node * root, int key) {
     
     current = root;
     
+    if(current == NULL) return 0;
+
     while (!current->is_leaf) {
         scannode(key, &current, 0);
     }
@@ -822,17 +731,12 @@ int delete_par(node * root, int key) {
 
 
 
-
-
 // FUNCTION DEFINITIONS.
 
 // OUTPUT AND UTILITIES
 
 /* Copyright and license notice to user at startup.
  */
-
-#define Version "1.13"
-
 void license_notice( void ) {
 	printf("bpt version %s -- Copyright (C) 2010  Amittai Aviram "
            "http://www.amittai.com\n", Version);
@@ -2010,8 +1914,8 @@ node * delete_entry( node * root, node * n, int key, void * pointer ) {
 
 
 /* Master deletion function.
- */
-node * _delete(node * root, int key) {
+
+node * delete(node * root, int key) {
     
 	node * key_leaf;
 	record * key_record;
@@ -2030,7 +1934,7 @@ node * _delete(node * root, int key) {
     
 	return root;
 }
-
+*/
 
 void destroy_tree_nodes(node * root) {
 	int i;
@@ -2052,581 +1956,34 @@ node * destroy_tree(node * root) {
 }
 
 
-// MAIN
-/*
-int main( int argc, char ** argv ) {
-    
-	char * input_file;
-	FILE * fp;
-	node * root;
-	int input, range2;
-	char instruction;
-	char license_part;
-    
-	root = NULL;
-	verbose_output = false;
-    
-	if (argc > 1) {
-		order = atoi(argv[1]);
-		if (order < MIN_ORDER || order > MAX_ORDER) {
-			fprintf(stderr, "Invalid order: %d .\n\n", order);
-			usage_3();
-			exit(EXIT_FAILURE);
-		}
-	}
-    
-	license_notice();
-	usage_1();
-	usage_2();
-    
-	if (argc > 2) {
-		input_file = argv[2];
-		fp = fopen(input_file, "r");
-		if (fp == NULL) {
-			perror("Failure to open input file.");
-			exit(EXIT_FAILURE);
-		}
-		while (!feof(fp)) {
-			fscanf(fp, "%d\n", &input);
-			root = insert(root, input, input);
-		}
-		fclose(fp);
-		print_tree(root);
-	}
-    
-	printf("> ");
-	while (scanf("%c", &instruction) != EOF) {
-		switch (instruction) {
-            case 'd':
-                scanf("%d", &input);
-                root = _delete(root, input);
-                print_tree(root);
-                break;
-            case 'i':
-                scanf("%d", &input);
-                root = insert(root, input, input);
-                print_tree(root);
-                break;
-            case 'f':
-            case 'p':
-                scanf("%d", &input);
-                find_and_print(root, input, instruction == 'p');
-                break;
-            case 'r':
-                scanf("%d %d", &input, &range2);
-                if (input > range2) {
-                    int tmp = range2;
-                    range2 = input;
-                    input = tmp;
-                }
-                find_and_print_range(root, input, range2, instruction == 'p');
-                break;
-            case 'l':
-                print_leaves(root);
-                break;
-            case 'q':
-                while (getchar() != (int)'\n');
-                return EXIT_SUCCESS;
-            case 's':
-                if (scanf("how %c", &license_part) == 0) {
-                    usage_2();
-                    break;
-                }
-                switch(license_part) {
-                    case 'w':
-                        print_license(LICENSE_WARRANTEE);
-                        break;
-                    case 'c':
-                        print_license(LICENSE_CONDITIONS);
-                        break;
-                    default:
-                        usage_2();
-                        break;
-                }
-                break;
-            case 't':
-                print_tree(root);
-                break;
-            case 'v':
-                verbose_output = !verbose_output;
-                break;
-            case 'x':
-                if (root)
-                    root = destroy_tree(root);
-                print_tree(root);
-                break;
-            default:
-                usage_2();
-                break;
-		}
-		while (getchar() != (int)'\n');
-		printf("> ");
-	}
-	printf("\n");
-    
-	return EXIT_SUCCESS;
-}
-*/
 
-/*---------------START BENCHMARK------------------*/
-#include <sys/time.h>
-#include <math.h>
-#include <pthread.h>
-
-#define MAXITER 5000000
-
-node* root = NULL;
-
-/* RANDOM GENERATOR */
-
-
-// RANGE: (1 - r)
-int rand_range_re(unsigned int *seed, long r) {
-    return (rand_r(seed) % r) + 1;
-}
-
-
-/* simple function for generating random integer for probability, only works on value of integer 1-100% */
-
-#define MAX_POOL 1000
-
-int p_pool[MAX_POOL];
-
-void prepare_randintp(float ins, float del) {
-    
-    int i,j=0;
-    
-    //Put insert
-    for(i = 0;i < ins * MAX_POOL/100; i++){
-        p_pool[j++]=1;
-    }
-    //Put delete
-    for(i = 0; i< del* MAX_POOL/100; i++){
-        p_pool[j++]=2;
-    }
-    //Put search
-    for(i = j; i < MAX_POOL; i++){
-        p_pool[j++]=3;
-    }
-    
-    /*
-     fprintf(stderr,"\n");
-     for (i = 0; i < MAX_POOL; i++)
-     fprintf(stderr, "%d, ", p_pool[i]);
-     fprintf(stderr,"\n");
-     */
-}
-
-/* Struct for data input/output per-thread */
-struct arg_bench {
-    unsigned rank;
-    int size;
-    unsigned seed;
-    unsigned seed2;
-    unsigned update;
-    unsigned *pool;
-    unsigned long max_iter;
-    long counter_ins;
-    long counter_del;
-    long counter_search;
-    long counter_ins_s;
-    long counter_del_s;
-    long counter_search_s;
-    long timer;
-    long *inputs;
-    int *ops;
-};
-
-
-
-void* do_bench (void* arguments)
-{
-    long counter[3]={0}, success[3]={0};
-    int val = 0;// last = 0;
-    unsigned *pool;
-    int ops, ret = 0;
-    int b_size;
-    long cont = 0;
-    long max_iter = 0;
-    
-    struct timeval start, end;
-    struct arg_bench *args = arguments;
-    
-    max_iter = args->max_iter;
-    b_size = args->size;
-    pool = args->pool;
-    
-    //fprintf(stderr, "seed1:%d, seed2:%d, iter: %ld\n", args->seed, args->seed2, max_iter);
-    
-#ifndef __APPLE__
-#if (__THREAD_PINNING == 1)
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(args->rank, &cpuset);
-    
-    pthread_t current_thread = pthread_self();
-    
-    fprintf(stdout, "Pinning to core %d... %s\n", args->rank, pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset)==0?"Success":"Failed");
-#endif
-#endif
-    
-    pthread_barrier_wait(&bench_barrier);
-    
-    gettimeofday(&start, NULL);
-    
-    /* Check the flag once in a while to see when to quit. */
-    while(cont < max_iter){
-        
-        /*---------------------------*/
-        
-        //--For a completely random values (original)
-        ops = pool[rand_range_re(&args->seed, MAX_POOL) - 1];
-        val = rand_range_re(&args->seed2, b_size);
-        
-        //DEBUG_PRINT("ops:%d, val:%ld\n", ops, val);
-        
-        switch (ops){
-                case 1:
-                    ret  = insert_par(&root, val, val);
-                    break;
-                case 2:
-                    ret = delete_par(root, val);
-                    break;
-                case 3:
-                    ret = search_par(root, val);
-                    break;
-            default: exit(0); break;
-        }
-        cont++;
-        counter[ops-1]++;
-        if(ret)
-        success[ops-1]++;
-        
-    }
-    
-    gettimeofday(&end, NULL);
-    
-    args->counter_ins = counter[0];
-    args->counter_del = counter[1];
-    args->counter_search = counter[2];
-    
-    args->counter_ins_s = success[0];
-    args->counter_del_s = success[1];
-    args->counter_search_s = success[2];
-    
-    args->timer =(end.tv_sec * 1000 + end.tv_usec / 1000) - (start.tv_sec * 1000 + start.tv_usec / 1000);
-	
-    
-    //DEBUG_PRINT("\ncount:%ld, ins:%ld, del:%ld, search:%ld", cont, args->counter_ins, args->counter_del, args->counter_search);
-    
-    
-    pthread_exit((void*) arguments);
-}
-
-
-int benchmark(int threads, int size, float ins, float del){
-    pthread_t *pid;
-    long *inputs;
-    int *ops;
-    
-    int i, k;
-    
-    struct arg_bench *args, *arg;
-    
-    struct arg_bench result;
-    
-    args = calloc(threads, sizeof(struct arg_bench));
-    
-    inputs = calloc(size, sizeof(long));
-    ops = calloc(size, sizeof(int));
-    
-    prepare_randintp(ins, del);
-    
-    long ncores = sysconf( _SC_NPROCESSORS_ONLN );
-    int midcores = (int)ncores/2;
-    
-    for(i = 0; i< threads; i++){
-        arg = &args[i];
-        
-        if(threads > midcores && threads < ncores){
-            if(i >= (threads/2))
-                arg->rank = i - (threads/2) + midcores;
-            else
-                arg->rank = i;
-        }else
-            arg->rank = i;
-        
-        arg->size = size;
-        
-        arg->update = ins + del;
-        arg->seed = rand();
-        arg->seed2 = rand();
-        arg->pool = calloc(MAX_POOL, sizeof(unsigned));
-        
-        for (k = 0; k < MAX_POOL; k++)
-        arg->pool[k] = p_pool[k];
-        
-        arg->counter_ins = 0;
-        arg->counter_del = 0;
-        arg->counter_search = 0;
-        
-        arg->counter_ins_s = 0;
-        arg->counter_del_s = 0;
-        arg->counter_search_s = 0;
-        
-        arg->timer = 0;
-        
-        arg->inputs = inputs;
-        arg->ops = ops;
-        
-        arg->max_iter = ceil(MAXITER / threads);
-        
-    }
-    
-    /*
-     for(j = 0; j < size; j++)
-     inputs[j] = (rand() % size) + 1;
-     
-     for(j = 0; j < size; j++)
-     ops[j] =  p_pool[(rand() % 100)];
-     */
-    
-    pid = calloc(threads, sizeof(pthread_t));
-    
-    pthread_barrier_init(&bench_barrier,NULL,threads);
-
-    struct timeval _ts;
-    gettimeofday(&_ts, NULL);
-    fprintf(stderr, "\n#TS: %ld, %d\n", _ts.tv_sec, _ts.tv_usec);
-
-#ifdef __USEPCM
-	pcm_bench_start();    
-#endif
-    
-    fprintf(stderr, "\nStarting benchmark...");
-    
-    fprintf(stderr, "\n0: %d, %0.2f, %0.2f, %d, ", size, ins, del, threads);
-    
-    
-    for (i = 0; i<threads; i++)
-    pthread_create (&pid[i], NULL, &do_bench, &args[i]);
-    
-    for (i = 0; i<threads; i++)
-    pthread_join (pid[i], NULL);
-    
-    
-#ifdef __USEPCM
-	pcm_bench_end();   
-	pcm_bench_print(); 
-#endif
-    
-    result.counter_del = 0;
-    result.counter_del_s = 0;
-    result.counter_ins = 0;
-    result.counter_ins_s = 0;
-    result.counter_search = 0;
-    result.counter_search_s = 0;
-    result.timer = 0;
-    
-    for(i = 0; i< threads; i++){
-        arg = &args[i];
-        
-        result.counter_del = result.counter_del + arg->counter_del;
-        result.counter_del_s = result.counter_del_s + arg->counter_del_s;
-        result.counter_ins = result.counter_ins + arg->counter_ins;
-        result.counter_ins_s = result.counter_ins_s + arg->counter_ins_s;
-        result.counter_search = result.counter_search + arg->counter_search;
-        result.counter_search_s = result.counter_search_s + arg->counter_search_s;
-        
-        if(arg->timer > result.timer)
-            result.timer = arg->timer;
-        
-        /*
-         fprintf(stderr, "\n(%d): %ld,%ld,%ld,%ld", i, arg->counter_ins, arg->counter_del, arg->counter_search, arg->timer);
-         fprintf(stderr, "\n(%d): %ld,%ld,%ld,%ld", i, arg->counter_ins_s, arg->counter_del_s, arg->counter_search_s, arg->timer);
-         */
-    }
-    
-    fprintf(stderr, " %ld, %ld, %ld,", result.counter_ins, result.counter_del, result.counter_search);
-    fprintf(stderr, " %ld, %ld, %ld, %ld\n", result.counter_ins_s, result.counter_del_s, result.counter_search_s, result.timer);
-    
-    free(pid);
-    free(inputs);
-    free(ops);
-    free(args);
-    
-    return 0;
-}
-
-void initial_add (int num, int range) {
+void initial_add (struct node **root, int num, int range) {
     int i = 0, j = 0;
-    
-    //unsigned rand_temp=987;
-    
+
     while(i < num){
         j = (rand()%range) + 1;
-//        printf("insert_par(&root,%d,%d);\n", j, j);
-        
-        i += insert_par(&root, j, j);
-        
+        i += insert_par(root, j, j);
     }
-
-    /* TESTING CORRECTNESS */
-    /*
-     j = 1024;
-     
-     if(!bt_insertkey (bt, (char*)&j, 4, 0, j, 0))
-     fprintf(stderr, "Inserted #%d:%d...\n", i, j);
-     
-     
-     if(!bt_insertkey (bt, (char*)&j, 4, 0, j, 0))
-     fprintf(stderr, "Inserted #%d:%d...\n", i, j);
-     
-     
-     if( bt_findkey (bt, (char*)&j, 4) )
-     fprintf(stderr, "Found #%d:%d...\n", i, j);
-     
-     j = 2048;
-     if( bt_findkey (bt, (char*)&j, 4) )
-     fprintf(stderr, "Found #%d:%d...\n", i, j);
-     */
 }
 
 
-void start_benchmark(int key_size, int updaterate, int num_thread, int v){
-    
-    float update = (float)updaterate/2;
-    
-    benchmark(num_thread, key_size, update, update);
-    
-}
-
-int *bulk;
-int nr;
-
-void* do_test (void* args){
-    
-    int *myid = (int*) args;
-    int i;
-    
-    int start = (MAXITER/nr) * (*myid);
-    int range = (MAXITER/nr);
-    int end = start + range;
-    
-    fprintf(stdout, "id:%d, s:%d, r:%d, e:%d\n", *myid, start, range, end);
-    
-    pthread_barrier_wait(&bench_barrier);
-    
-    for (i = start; i < end; i++)
-        insert_par(&root, bulk[i], bulk[i]);
-    
-    pthread_exit((void*) args);
-}
-
-
-void test(int initial, int updaterate, int num_thread, int random){
-    
-    int i;
-    
-    pthread_t pid[num_thread];
-    int arg [num_thread];
-    
-    struct timeval st,ed;
-    pthread_barrier_init(&bench_barrier, NULL, num_thread + 1);
-    
-    int allkey = MAXITER;
-    
-    nr = num_thread;
-    bulk = calloc(MAXITER, sizeof(int));
-    
-    for(i = 0; i < allkey; i++){
-        if(!random)
-            bulk[i] = 1 + i +initial;
-        else
-            bulk[i] = 1 + (rand()%MAXITER) + initial;
-    }
-    
-    for (i = 0; i<num_thread; i++){
-        arg[i] = i;
-        pthread_create (&pid[i], NULL, &do_test, &arg[i]);
-    }
-    
-    pthread_barrier_wait(&bench_barrier);
-    
-    gettimeofday(&st, NULL);
-    
-    for (i = 0; i<num_thread; i++)
-        pthread_join (pid[i], NULL);
-    
-    gettimeofday(&ed, NULL);
-    
-    printf("time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
-    
-    for(i = 0; i < allkey; i++){
-        if(!search_par(root, bulk[i]))
-           fprintf(stderr, "Error!\n");
-    }
-
-}
-
-#define RANDOM 1
-
-void testseq(){
-    
-  int i, count = 0, seed;
-  struct timeval st,ed; 
-  int values[MAXITER];
-
-  seed = time(NULL);
-  srand(seed);
-
-  for(i = 0; i < MAXITER; i++){
-        if(RANDOM)
-                values[i] = (rand()%MAXITER)+1;
-        else
-            	values[i] = i+1;
-  }
-
-  printf("Inserting %d (%s) elements...\n", MAXITER, (RANDOM?"Random":"Increasing"));
-
-  gettimeofday(&st, NULL);
-
-  for(i = 0; i < MAXITER; i++){
-        insert_par(&root, values[i], values[i]);
-  }
-
-  gettimeofday(&ed, NULL);
-
-  printf("insert time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
-
-  //report_all((*universe->root)->a);
-    
-  srand(seed);
-
-  gettimeofday(&st, NULL);
-
-  for(i = 0; i < MAXITER; i++){
-        if(!search_par(root, values[i])){
-            count++;
-        }
-  }
-
-  gettimeofday(&ed, NULL);    
-  printf("search time : %lu usec\n", (ed.tv_sec - st.tv_sec)*1000000 + ed.tv_usec - st.tv_usec);
-
-  fprintf(stderr, "Error searching :%d!\n",count);
-    
-  exit(0);
-}
 
 /*------------------- END BENCHMARK ---------------------*/
+#ifndef NOT_STANDALONE
+
+#include "bench.h"
 
 #include<unistd.h>
 
 int main( int argc, char ** argv ) {
 
+
+struct node *root = NULL;
+
 int myopt = 0;
+
 int s, u, n, i, t, r, v;       //Various parameters
+
 float d;
 
 i = 1023;           //default initial element count
@@ -2645,25 +2002,19 @@ fprintf(stderr,"NOTE: No parameters supplied, will continue with defaults\n");
 fprintf(stderr,"Use -h switch for help.\n\n");
 
 while( EOF != myopt ) {
-    myopt = getopt(argc,argv,"r:t:n:i:u:s:d:v:hb:");
+    myopt = getopt(argc,argv,"r:n:i:u:s:hb:");
     switch( myopt ) {
             case 'r': r = atoi( optarg ); break;
             case 'n': n = atoi( optarg ); break;
-            case 't': t = atoi( optarg ); break;
             case 'i': i = atoi( optarg ); break;
             case 'u': u = atoi( optarg ); break;
             case 's': s = atoi( optarg ); break;
-            case 'd': d = atof( optarg ); break;
-            case 'v': v = atof( optarg ); break;
             case 'h': fprintf(stderr,"Accepted parameters\n");
             fprintf(stderr,"-r <NUM>    : Range size\n");
             fprintf(stderr,"-u <0..100> : Update ratio. 0 = Only search; 100 = Only updates\n");
             fprintf(stderr,"-i <NUM>    : Initial tree size (inital pre-filled element count)\n");
-            fprintf(stderr,"-t <NUM>    : DeltaNode size (NOT USED)\n");
             fprintf(stderr,"-n <NUM>    : Number of threads\n");
             fprintf(stderr,"-s <NUM>    : Random seed. 0 = using time as seed\n");
-            fprintf(stderr,"-d <0..1>   : Density (in float) (NOT USED)\n");
-            fprintf(stderr,"-v <0 or 1> : Valgrind mode (less stats). 0 = False; 1 = True (NOT USED)\n");
             fprintf(stderr,"-h          : This help\n\n");
             fprintf(stderr,"Benchmark output format: \n\"0: range, insert ratio, delete ratio, #threads, attempted insert, attempted delete, attempted search, effective insert, effective delete, effective search, time (in msec)\"\n\n");
             exit(0);
@@ -2671,13 +2022,10 @@ while( EOF != myopt ) {
 }
 fprintf(stderr,"Parameters:\n");
 fprintf(stderr,"- Range size r:\t\t %d\n", r);
-fprintf(stderr,"- (NOT USED)DeltaNode size t:\t %d\n", t);
 fprintf(stderr,"- Update rate u:\t %d%% \n", u);
 fprintf(stderr,"- Number of threads n:\t %d\n", n);
 fprintf(stderr,"- Initial tree size i:\t %d\n", i);
 fprintf(stderr,"- Random seed s:\t %d\n", s);
-fprintf(stderr,"- (NOT USED)Density d:\t\t %f\n", d);
-fprintf(stderr,"- (NOT USED)Valgrind mode v:\t %d\n\n", v);
 
 if (s == 0)
 srand((int)time(0));
@@ -2688,106 +2036,25 @@ srand(s);
 
     
     pthread_spin_init(&global_lock, PTHREAD_PROCESS_SHARED);
-    
-    //testseq();
-    //test(r, u, n, 0);
+
+#if !defined(__TEST)
 
 if (i > 0){
     fprintf(stderr,"Now pre-filling %d random elements...\n", i);
-    initial_add(i, r);
+    initial_add(&root, i, r);
     fprintf(stderr,"...Done!\n\n");
 }
 
+    start_benchmark(&root, r, u, n, v);
 
-    start_benchmark(r, u, n, v);
-/*
-    exit(0);
-    insert_par(&root,852487,852487);
-    insert_par(&root,1985045,1985045);
-    insert_par(&root,526638,526638);
-    insert_par(&root,1340775,1340775);
-    insert_par(&root,956436,956436);
-    insert_par(&root,1096838,1096838);
-    insert_par(&root,1850532,1850532);
-    insert_par(&root,1611330,1611330);
-    insert_par(&root,47161,47161);
-    insert_par(&root,1328108,1328108);
-    insert_par(&root,1398533,1398533);
-    insert_par(&root,1512053,1512053);
-    insert_par(&root,898214,898214);
-    insert_par(&root,85728,85728);
-    insert_par(&root,681742,681742);
-    printf("\n");
-    print_tree(root);
+#else
 
-    insert_par(&root,1439192,1439192);
+	testpar(&root, u, n, 1);
+	testseq(&root, 1);
     
-    
-    insert_par(&root,18,18);
-    
-    insert_par(&root,19,19);
-    insert_par(&root,12,12);
-    insert_par(&root,10,10);
-    insert_par(&root,11,11);
-    insert_par(&root,8,8);
-    insert_par(&root,15,15);
-    insert_par(&root,5,5);
-    insert_par(&root,17,17);
- 
-    printf("\n");
-    print_tree(root);
-
-    
-    insert_par(&root,2,2);
-    
-    
-    printf("\n");
-    print_tree(root);
-
-    
-    insert_par(&root,9,9);
-    insert_par(&root,1,1);
-    insert_par(&root,6,6);
-    insert_par(&root,7,7);
-    insert_par(&root,3,3);
-    
-   
-    insert_par(&root,13,13);
-    insert_par(&root,4,4);
-    insert_par(&root,20,20);
-    
-    
-    printf("\n");
-    print_tree(root);
-
-    
-    insert_par(&root,14,14);
-    
-    
-    
-    printf("\n");
-    print_tree(root);
-
-    insert_par(&root, 16,16);
-
-    printf("\n");
-    print_tree(root);
-
-    insert_par(&root, 10,10);
-    
-    printf("\n");
-    print_tree(root);
-
-
-    insert_par(&root, 13,13);
-    
-    printf("\n");
-    print_tree(root);
-
-    
-    if(search_par(root, 20))
-        printf("Found!\n");
-//*/
+#endif
 
 return 0;
 }
+
+#endif
