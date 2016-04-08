@@ -23,26 +23,10 @@
  
  */
 
-#ifndef hello_common_h
-#define hello_common_h
+#ifndef TREE_H
+#define TREE_H
 
-#ifdef DEBUG
-#define DEBUG_PRINT(...) {fprintf(stderr, "\n>>DEBUG: ");fprintf( stderr, __VA_ARGS__ ); }
-#else
-#define DEBUG_PRINT(...) {}
-#endif
-
-#define MAXINT  INT_MAX
-#define EMPTY   0
-#define FULL    1
-
-#define PRE_ALLOC   1
-#define MAXAUX      5000000
-#define MAXITER     5000000
-
-#define TIME_PER_BENCH 10
-
-struct __attribute__((__packed__)) node
+struct node
 {
     struct node *left;
     struct node *right;
@@ -126,7 +110,7 @@ void travNode(struct node *p, int lastval, int mark, void (*cb)(void*), long * t
 void nop(void *null);
 int rand_range_re(unsigned int *seed, long r);
 void build_balanced_height(struct global *unv, struct node *p, int height, int start);
-
+void initial_add (struct global *universe, int num, int range);
 
 #ifdef __cplusplus
 }

@@ -3,11 +3,11 @@ CMN_INC	:= ../common
 ARCH:=$(shell uname -p)
 
 #Location of profiler library and include (e.g., PAPI)
-PROF_LIB:= /home/ibrahim/local/lib
-PROF_INC:= /home/ibrahim/local/include
+PROF_LIB:= /opt/papi/5.4.1/lib
+PROF_INC:= /opt/papi/5.4.1/include
 
 #Location of Intel PCM library
-PCM_DIR:= /opt/intel-pcm
+PCM_DIR:= /opt/tools/intel-pcm/2.7
 
 #Location of GEM5
 GEM5_DIR := ../m5
@@ -38,8 +38,9 @@ ENE_CCFLAGS := -D__ENERGY
 ifeq (${ARCH}, x86_64)
 ENE_CC = ${CXX}
 SRCENE   = ${CMN_INC}/pcmpower.c 
-ENE_CCFLAGS += -std=c++11 -I${PCM_DIR} -fpermissive
-ENE_LDFLAGS += -Wl,-rpath=${PCM_DIR}/intelpcm.so -L${PCM_DIR}/intelpcm.so -lintelpcm 
+ENE_CCFLAGS += -std=c++11 -I${PCM_DIR}/include -fpermissive
+#ENE_LDFLAGS += -Wl,-rpath=${PCM_DIR}/lib/intelpcm.so -L${PCM_DIR}/intelpcm.so -lintelpcm 
+ENE_LDFLAGS += ${PCM_DIR}/lib/client_bw.o  ${PCM_DIR}/lib/cpucounters.o  ${PCM_DIR}/lib/msr.o  ${PCM_DIR}/lib/pci.o
 endif
 
 ifeq (${ARCH}, armv7l)
@@ -74,12 +75,15 @@ PROF_LDFLAGS += ${ADDLD} ${PROFLIB}
 #BUILD
 
 .PHONY: all clean
-all:: ${TARGET} ${TARGET}.energy ${TARGET}.profile 
+all:: copy_obj ${TARGET} ${TARGET}.energy ${TARGET}.profile 
 
 #Plain
 
+copy_obj:
+	cp ./obj/* .
+
 ${TARGET}: ${OBJS}
-	${CC} ${LDFLAGS} -o $@ $^ ${LIBS} 
+	${CC} ${LDFLAGS} -o $@ $^ ${PREC} ${LIBS} 
 
 ${OBJS}: %.o: %.c
 	${CC} ${CCFLAGS} ${TREE} -o $@ -c $< 
@@ -87,7 +91,7 @@ ${OBJS}: %.o: %.c
 #Energy
 
 ${TARGET}.energy: ${ENE_OBJS}
-	${ENE_CC} ${ENE_LDFLAGS} ${LDFLAGS} -o $@ $^ ${LIBS} 
+	${ENE_CC} ${ENE_LDFLAGS} ${LDFLAGS} -o $@ $^ ${PREC}.ene ${LIBS} 
 
 ${ENE_OBJS}: %.o.ene: %.c
 	${ENE_CC} ${ENE_CCFLAGS} ${CCFLAGS} ${TREE} -o $@ -c $< 
@@ -95,7 +99,7 @@ ${ENE_OBJS}: %.o.ene: %.c
 #Profile
 
 ${TARGET}.profile: ${PROF_OBJS}
-	${CC} ${PROF_LDFLAGS} ${LDFLAGS} -o $@ $^ ${LIBS} 
+	${CC} ${PROF_LDFLAGS} ${LDFLAGS} -o $@ $^ ${PREC}.prof ${LIBS} 
 
 ${PROF_OBJS}: %.o.prof: %.c
 	${CC} ${PROF_CCFLAGS} ${CCFLAGS} ${TREE} -o $@ -c $< 
@@ -122,4 +126,4 @@ ${PROF_OBJS}: %.o.prof: %.c
 
 
 clean:: 
-	-rm -f *~ ${OBJS} ${TEST_OBJS} ${SIM_OBJS} ${ENE_OBJS} ${PROF_OBJS} ${TARGET} ${TARGET}.test ${TARGET}.sim ${TARGET}.profile ${TARGET}.energy 
+	-rm -f *~ ${OBJS} ${TEST_OBJS} ${PREC} ${PREC}.ene ${PREC}.prof ${SIM_OBJS} ${ENE_OBJS} ${PROF_OBJS} ${TARGET} ${TARGET}.test ${TARGET}.sim ${TARGET}.profile ${TARGET}.energy 

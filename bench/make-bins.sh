@@ -1,6 +1,6 @@
 #!/bin/sh
 
-PROGS1=("GBST" "DeltaTree" "hGBST" "CBTree")
+PROGS1=("GreenBST" "DeltaTree" "BlueBST" "CBTree")
 
 PROGS2=("rbtree" "avltree" "sftree" "btrees")
 

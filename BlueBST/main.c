@@ -23,7 +23,6 @@
  
 */
 
-#define _GNU_SOURCE
 #include<sched.h>
 #include<unistd.h>
 #include<stdio.h>
@@ -46,9 +45,9 @@
 
 #include<pthread.h>
 
-#include "common.h"
-#include "locks.h"
 #include "bench.h"
+#include "tree.h"
+
 
 //int duplicates = 0;
 unsigned entering_top=0;
@@ -65,7 +64,7 @@ int main(int argc, char **argv ) {
     int s, u, n, i, t, r, v;       //Various parameters
     
     i = 127;           //default initial element count
-    t = 1023;            //default triangle size
+    t = 127;            //default triangle size
     r = 5000000;        //default range size
     u = 10;             //default update rate
     s = 0;              //default seed
@@ -142,17 +141,19 @@ int main(int argc, char **argv ) {
     universe->iratio = malloc(universe->max_depth * sizeof(float));         //Pre-Compute per-level ratio based on density
     for(ii=0;ii<universe->max_depth;ii++){
         universe->iratio[ii] = universe->density + ii * ((1 - universe->density) / (universe->max_depth - 1));
-        DEBUG_PRINT("level %d ratio: %f\n" , ii, universe->iratio[ii]);
+        //DEBUG_PRINT("level %d ratio: %f\n" , ii, universe->iratio[ii]);
     }
     
     init_global(universe);
     
     fprintf(stderr,"Finished building initial DeltaTree\n");
     fprintf(stderr, "The node size is: %ld bytes\n", sizeof(struct node));
-    
-    if(i){
+
+#if !defined(__TEST)
+
+	if(i){
         fprintf(stderr,"Now pre-filling %d random elements...\n", i);
-        initial_add_balanced(universe, i, r, 0);
+        initial_add(universe, i, r);
         fprintf(stderr,"...Done!\n\n");
 
     }
@@ -160,13 +161,15 @@ int main(int argc, char **argv ) {
     
     
     start_benchmark(universe, r, u, n, v);
+
+#else
+
+	testpar(universe, u, n, 1);
+	testseq(universe, 1);
     
-    //for(ii=0;ii<MAXITER;ii++){
-    //    insertNode(universe, ii+1);
-    //}
-    
-    
-    fprintf(stderr, "Entering top: %d, Waiting at the top:%d\n", entering_top, waiting_top);
+#endif
+
+    //fprintf(stderr, "Entering top: %d, Waiting at the top:%d\n", entering_top, waiting_top);
     
     free(universe);
     return 0;
