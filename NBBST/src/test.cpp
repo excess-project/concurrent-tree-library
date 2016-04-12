@@ -95,11 +95,11 @@ int pthread_barrier_wait(pthread_barrier_t *barrier)
 #include "tree_type_traits.hpp"
 
 //Include all the trees implementations
-#include "skiplist/SkipList.hpp"
+//#include "skiplist/SkipList.hpp"
 #include "nbbst/NBBST.hpp"
-#include "avltree/AVLTree.hpp"
-#include "lfmst/MultiwaySearchTree.hpp"
-#include "cbtree/CBTree.hpp"
+//#include "avltree/AVLTree.hpp"
+//#include "lfmst/MultiwaySearchTree.hpp"
+//#include "cbtree/CBTree.hpp"
 
 #define __THREAD_PINNING 1
 pthread_barrier_t bench_barrier;
@@ -662,69 +662,6 @@ void start_benchmark(int initial, int key_size, int updaterate, int num_thread, 
             case 22: benchmark<nbbst::NBBST<int, 22>, 22>(22, key_size, update, update, initial); break;
             case 23: benchmark<nbbst::NBBST<int, 23>, 23>(23, key_size, update, update, initial); break;
             case 24: benchmark<nbbst::NBBST<int, 24>, 24>(24, key_size, update, update, initial); break;
-            default: break;
-        }
-    }else if(treetype == 1){
-        //std::cout << "Optimistic AVL Tree" << std::endl;
-        switch(num_thread){
-            case 1: benchmark<avltree::AVLTree<int, 1>, 1>(1, key_size, update, update, initial); break;
-            case 2: benchmark<avltree::AVLTree<int, 2>, 2>(2, key_size, update, update, initial); break;
-            case 3: benchmark<avltree::AVLTree<int, 3>, 3>(3, key_size, update, update, initial); break;
-            case 4: benchmark<avltree::AVLTree<int, 4>, 4>(4, key_size, update, update, initial); break;
-            case 5: benchmark<avltree::AVLTree<int, 5>, 5>(5, key_size, update, update, initial); break;
-            case 6: benchmark<avltree::AVLTree<int, 6>, 6>(6, key_size, update, update, initial); break;
-            case 7: benchmark<avltree::AVLTree<int, 7>, 7>(7, key_size, update, update, initial); break;
-            case 8: benchmark<avltree::AVLTree<int, 8>, 8>(8, key_size, update, update, initial); break;
-            case 9: benchmark<avltree::AVLTree<int, 9>, 9>(9, key_size, update, update, initial); break;
-            case 10: benchmark<avltree::AVLTree<int, 10>, 10>(10, key_size, update, update, initial); break;
-            case 11: benchmark<avltree::AVLTree<int, 11>, 11>(11, key_size, update, update, initial); break;
-            case 12: benchmark<avltree::AVLTree<int, 12>, 12>(12, key_size, update, update, initial); break;
-            case 13: benchmark<avltree::AVLTree<int, 13>, 13>(13, key_size, update, update, initial); break;
-            case 14: benchmark<avltree::AVLTree<int, 14>, 14>(14, key_size, update, update, initial); break;
-            case 15: benchmark<avltree::AVLTree<int, 15>, 15>(15, key_size, update, update, initial); break;
-            case 16: benchmark<avltree::AVLTree<int, 16>, 16>(16, key_size, update, update, initial); break;
-            default: break;
-        }
-    }else if(treetype == 2){
-        //std::cout << "Lock Free Multiway Search Tree" << std::endl;
-        switch(num_thread){
-            case 1: benchmark<lfmst::MultiwaySearchTree<int, 1>, 1>(1, key_size, update, update, initial); break;
-            case 2: benchmark<lfmst::MultiwaySearchTree<int, 2>, 2>(2, key_size, update, update, initial); break;
-            case 3: benchmark<lfmst::MultiwaySearchTree<int, 3>, 3>(3, key_size, update, update, initial); break;
-            case 4: benchmark<lfmst::MultiwaySearchTree<int, 4>, 4>(4, key_size, update, update, initial); break;
-            case 5: benchmark<lfmst::MultiwaySearchTree<int, 5>, 5>(5, key_size, update, update, initial); break;
-            case 6: benchmark<lfmst::MultiwaySearchTree<int, 6>, 6>(6, key_size, update, update, initial); break;
-            case 7: benchmark<lfmst::MultiwaySearchTree<int, 7>, 7>(7, key_size, update, update, initial); break;
-            case 8: benchmark<lfmst::MultiwaySearchTree<int, 8>, 8>(8, key_size, update, update, initial); break;
-            case 9: benchmark<lfmst::MultiwaySearchTree<int, 9>, 9>(9, key_size, update, update, initial); break;
-            case 10: benchmark<lfmst::MultiwaySearchTree<int, 10>, 10>(10, key_size, update, update, initial); break;
-            case 11: benchmark<lfmst::MultiwaySearchTree<int, 11>, 11>(11, key_size, update, update, initial); break;
-            case 12: benchmark<lfmst::MultiwaySearchTree<int, 12>, 12>(12, key_size, update, update, initial); break;
-            case 13: benchmark<lfmst::MultiwaySearchTree<int, 13>, 13>(13, key_size, update, update, initial); break;
-            case 14: benchmark<lfmst::MultiwaySearchTree<int, 14>, 14>(14, key_size, update, update, initial); break;
-            case 15: benchmark<lfmst::MultiwaySearchTree<int, 15>, 15>(15, key_size, update, update, initial); break;
-            case 16: benchmark<lfmst::MultiwaySearchTree<int, 16>, 16>(16, key_size, update, update, initial); break;
-            default: break;
-        }
-    }else if(treetype == 3){
-        //std::cout << "Counter Based Tree" << std::endl;
-        switch(num_thread){
-            case 1: benchmark<cbtree::CBTree<int, 1>, 1>(1, key_size, update, update, initial); break;
-            case 2: benchmark<cbtree::CBTree<int, 2>, 2>(2, key_size, update, update, initial); break;
-            case 3: benchmark<cbtree::CBTree<int, 3>, 3>(3, key_size, update, update, initial); break;
-            case 4: benchmark<cbtree::CBTree<int, 4>, 4>(4, key_size, update, update, initial); break;
-            case 5: benchmark<cbtree::CBTree<int, 5>, 5>(5, key_size, update, update, initial); break;
-            case 6: benchmark<cbtree::CBTree<int, 6>, 6>(6, key_size, update, update, initial); break;
-            case 7: benchmark<cbtree::CBTree<int, 7>, 7>(7, key_size, update, update, initial); break;
-            case 8: benchmark<cbtree::CBTree<int, 8>, 8>(8, key_size, update, update, initial); break;
-            case 9: benchmark<cbtree::CBTree<int, 9>, 9>(9, key_size, update, update, initial); break;
-            case 10: benchmark<cbtree::CBTree<int, 10>, 10>(10, key_size, update, update, initial); break;
-            case 11: benchmark<cbtree::CBTree<int, 11>, 11>(11, key_size, update, update, initial); break;
-            case 12: benchmark<cbtree::CBTree<int, 12>, 12>(12, key_size, update, update, initial); break;
-            case 13: benchmark<cbtree::CBTree<int, 13>, 13>(13, key_size, update, update, initial); break;
-            case 14: benchmark<cbtree::CBTree<int, 14>, 14>(14, key_size, update, update, initial); break;
-            case 15: benchmark<cbtree::CBTree<int, 15>, 15>(15, key_size, update, update, initial); break;
-            case 16: benchmark<cbtree::CBTree<int, 16>, 16>(16, key_size, update, update, initial); break;
             default: break;
         }
     }

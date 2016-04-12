@@ -33,7 +33,9 @@ file(
 file(
 	GLOB_RECURSE
 	btrees_source_files
-	src/*.cpp
+	src/test.cpp
+	src/main.cpp
+	src/HazardManager.cpp
 )
 
 file(
