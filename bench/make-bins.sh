@@ -1,8 +1,8 @@
 #!/bin/sh
 
-PROGS1=("GreenBST" "DeltaTree" "BlueBST" "CBTree")
+PROGS1=("GreenBST" "DeltaTree" "BlueBST" "CBTree" "BSTTK" "citrus" "LFBST" "SVEB")
 
-PROGS2=("rbtree" "avltree" "sftree" "btrees")
+#PROGS2=("rbtree" "avltree" "sftree" "btrees")
 
 current_dir=$(pwd)
 script_dir=$(dirname $0)
@@ -15,7 +15,10 @@ fi
 # load module environment on cluster
 . $HOME/.bashrc
 
-module load compiler/gnu/4.9.2
+module load compiler/gnu/4.8.2
+module load tools/intel-pcm/2.7
+module load papi/5.4.1
+
 export CC=gcc
 export CXX=g++
 
@@ -37,19 +40,19 @@ done
 cd "$script_dir/../synchrobench/c-cpp"
 make clean
 make estm
-make spinlock
-make lockfree
+#make spinlock
+#make lockfree
 
 rm "$script_dir/rbtree"
 rm "$script_dir/sftree"
-rm "$script_dir/nata"
-rm "$script_dir/citrus"
+#rm "$script_dir/nata"
+#rm "$script_dir/citrus"
 
 
 ln -s "$(pwd)/bin/ESTM-rbtree" "$script_dir/rbtree"
 ln -s "$(pwd)/bin/ESTM-specfriendly-tree" "$script_dir/sftree"
-ln -s "$(pwd)/bin/lockfree-bst" "$script_dir/nata"
-ln -s "$(pwd)/bin/SPIN-RCU-tree $script_dir/citrus"
+#ln -s "$(pwd)/bin/lockfree-bst" "$script_dir/nata"
+#ln -s "$(pwd)/bin/SPIN-RCU-tree $script_dir/citrus"
 
 
 #NBBST

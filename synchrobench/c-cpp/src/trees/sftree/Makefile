@@ -2,7 +2,7 @@ ROOT = ../../..
 
 include $(ROOT)/common/Makefile.common
 
-PCMS	:= ../../../../../intelpcm/cpucounters.o ../../../../../intelpcm/msr.o ../../../../../intelpcm/pci.o ../../../../../intelpcm/client_bw.o
+PCMS	:= /opt/tools/intel-pcm/2.7/lib/cpucounters.o /opt/tools/intel-pcm/2.7/lib/msr.o /opt/tools/intel-pcm/2.7/lib/pci.o /opt/tools/intel-pcm/2.7/lib/client_bw.o
 
 #atomic loads instead of unit loads (comment out for unit loads)
 #CFLAGS += -DATOMIC_LOADS
@@ -49,7 +49,7 @@ test.o: sftree.h intset.h
 
 main: sftree.o intset.o test.o $(PCMS)
 	$(CC) $(CFLAGS) $(BUILDIR)/sftree.o $(BUILDIR)/intset.o $(BUILDIR)/test.o -o $(BINS) $(LDFLAGS)
-	$(CXX) $(CFLAGS) -D__USEPCM $(BUILDIR)/sftree.pcm.o $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).energy" $(LDFLAGS)
+	$(CXX) $(CFLAGS) -D__USEPCM -I/opt/tools/intel-pcm/2.7/include ../../../../../common/pcmpower.c $(BUILDIR)/sftree.pcm.o $(BUILDIR)/intset.pcm.o $(BUILDIR)/test.pcm.o $(PCMS) -o "$(BINS).energy" $(LDFLAGS)
 
 #test_move.o: sftree.h intset.h
 #	$(CC) $(CFLAGS) -c -o $(BUILDIR)/test_move.o test_move.c
