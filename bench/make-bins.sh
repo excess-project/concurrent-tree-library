@@ -15,9 +15,9 @@ fi
 # load module environment on cluster
 . $HOME/.bashrc
 
-module load compiler/gnu/4.8.2
-module load tools/intel-pcm/2.7
-module load papi/5.4.1
+module load compiler/gnu/4.9.2
+#module load tools/intel-pcm/2.7
+#module load papi/5.4.1
 
 export CC=gcc
 export CXX=g++
