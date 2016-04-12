@@ -40,10 +40,10 @@ file(
      	GLOB_RECURSE
         pcm_source_files
 	../common/pcmpower.c
-        /opt/tools/intel-pcm/2.7/lib/pci.o
-	/opt/tools/intel-pcm/2.7/lib/cpucounters.o
-	/opt/tools/intel-pcm/2.7/lib/msr.o
-	/opt/tools/intel-pcm/2.7/lib/client_bw.o
+        ../intelpcm/lib/pci.o
+	../intelpcm/lib/cpucounters.o
+	../intelpcm/lib/msr.o
+	../intelpcm/lib/client_bw.o
 )
 
 file(GLOB to_remove src/genzipf.cpp)
@@ -59,8 +59,8 @@ list(REMOVE_ITEM btrees_memory_source_files ${to_remove})
 set_source_files_properties(${pcm_source_files} PROPERTIES LANGUAGE CXX)
 
 add_executable(btrees ${btrees_source_files})
-add_executable(btrees.energy ${btrees_source_files} ${pcm_source_files})
-SET_TARGET_PROPERTIES(btrees.energy PROPERTIES COMPILE_FLAGS "-D__USEPCM -I/opt/tools/intel-pcm/2.7/include")
+add_executable(btrees.pcm ${btrees_source_files} ${pcm_source_files})
+SET_TARGET_PROPERTIES(btrees.pcm PROPERTIES COMPILE_FLAGS "-D__USEPCM -I../intelpcm/include")
 
 
 #add_executable(memory ${btrees_memory_source_files})

@@ -1,9 +1,9 @@
 #Location of profiler library and include (e.g., PAPI)
-PROF_LIB:= /opt/papi/5.4.1/lib
-PROF_INC:= /opt/papi/5.4.1/include
+PROF_LIB:= ../papi/lib
+PROF_INC:= ../papi/include
 
 #Location of Intel PCM library
-PCM_DIR:= /opt/tools/intel-pcm/2.7
+PCM_DIR:= ../intelpcm
 
 #Location of GEM5
 GEM5_DIR := ../m5
@@ -83,7 +83,7 @@ endif
 #BUILD ----------------------------------------------------
 
 .PHONY: all clean
-all:: prep ${TARGET} ${TARGET}.energy ${TARGET}.profile 
+all:: prep ${TARGET} ${TARGET}.pcm ${TARGET}.profile 
 
 #Plain
 
@@ -99,7 +99,7 @@ ${OBJS}: %.o: %.c
 
 #Energy
 
-${TARGET}.energy: ${ENE_OBJS}
+${TARGET}.pcm: ${ENE_OBJS}
 	${ENE_CC} ${ENE_LDFLAGS} ${LDFLAGS} -o $@ $^ ${PREC_ENE} ${LIBS} 
 
 ${ENE_OBJS}: %.o.ene: %.c
@@ -135,4 +135,4 @@ ${PROF_OBJS}: %.o.prof: %.c
 
 
 clean:: 
-	-rm -f *~ ${OBJS} ${TEST_OBJS} ${PREC} ${PREC}.ene ${PREC}.prof ${SIM_OBJS} ${ENE_OBJS} ${PROF_OBJS} ${TARGET} ${TARGET}.test ${TARGET}.sim ${TARGET}.profile ${TARGET}.energy 
+	-rm -f *~ ${OBJS} ${TEST_OBJS} ${PREC} ${PREC}.ene ${PREC}.prof ${SIM_OBJS} ${ENE_OBJS} ${PROF_OBJS} ${TARGET} ${TARGET}.test ${TARGET}.sim ${TARGET}.profile ${TARGET}.pcm 
