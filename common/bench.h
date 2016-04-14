@@ -80,7 +80,7 @@
 
 #define BENCH_SEARCH(root, x)  searchNode_lo(root, x)
 #define BENCH_DELETE(root, x)  deleteNode_lo(root, x)
-#define BENCH_INSERT(root, x)  insert_par(root, x, x)
+#define BENCH_INSERT(root, x)  insert_par(root, x, 0)
 
 #endif
 

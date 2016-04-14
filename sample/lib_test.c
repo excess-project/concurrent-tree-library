@@ -1,5 +1,3 @@
-#define MAP_USE_CBTREE	//Use the CBTree
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -19,17 +17,14 @@ int main ()
 	for (i = 0; i < numData; i++) 
 		MAP_INSERT(cbtreePtr, i+1);
 
-	for (i = 0; i < numData; i++) {
+	for (i = 0; i < numData; i++)
 		printf("%ld: %d\n", i+1, MAP_CONTAINS(cbtreePtr, i+1)); 
-	}
 
-	for (i = 0; i < numData; i++) {
+	for (i = 0; i < numData; i++)
 		MAP_REMOVE(cbtreePtr, i+1);
-	}
 		
-	for (i = 0; i < numData; i++) {
+	for (i = 0; i < numData; i++)
 		printf("%ld: %d\n", i+1, MAP_CONTAINS(cbtreePtr, i+1)); 
-	}
 	
 	MAP_FREE(cbtreePtr);
 	

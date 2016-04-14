@@ -12,3 +12,6 @@ SIM	:= N
 
 
 include  ../common/common.mk
+
+lib: prep ${TARGET}
+	ar rcs libbluebst.a ${PREC}

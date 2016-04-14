@@ -82,7 +82,8 @@ endif
 
 #BUILD ----------------------------------------------------
 
-.PHONY: all clean
+.PHONY: all clean prep lib
+
 all:: prep ${TARGET} ${TARGET}.pcm ${TARGET}.profile 
 
 #Plain
@@ -135,4 +136,4 @@ ${PROF_OBJS}: %.o.prof: %.c
 
 
 clean:: 
-	-rm -f *~ ${OBJS} ${TEST_OBJS} ${PREC} ${PREC}.ene ${PREC}.prof ${SIM_OBJS} ${ENE_OBJS} ${PROF_OBJS} ${TARGET} ${TARGET}.test ${TARGET}.sim ${TARGET}.profile ${TARGET}.pcm 
+	-rm -f *~ *.a ${OBJS} ${TEST_OBJS} ${PREC} ${PREC}.ene ${PREC}.prof ${SIM_OBJS} ${ENE_OBJS} ${PROF_OBJS} ${TARGET} ${TARGET}.test ${TARGET}.sim ${TARGET}.profile ${TARGET}.pcm 
