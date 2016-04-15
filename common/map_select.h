@@ -57,18 +57,7 @@
 
 extern pthread_spinlock_t global_lock;
 
-data_t root = NULL;
-
-data_t cbtree_alloc(int a, int b)
-{
-	root = malloc(sizeof(void*));
-	*root = NULL;
-
-	pthread_spin_init(&global_lock, PTHREAD_PROCESS_PRIVATE);
-	return root;
-}
-
-#define MAP_ALLOC(x,y) cbtree_alloc(x,y)
+#define MAP_ALLOC(x,y) cbtree_alloc()
 #define MAP_FREE(x) {}
 
 #endif

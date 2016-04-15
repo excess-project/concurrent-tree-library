@@ -64,7 +64,7 @@
 
 #include "../CBTree/common.h"
 
-#define data_t struct node**
+#define data_t node**
 
 #define BENCH_SEARCH(root, x)  search_par(*root, x)
 #define BENCH_DELETE(root, x)  delete_par(*root, x)

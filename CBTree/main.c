@@ -1955,6 +1955,14 @@ node * destroy_tree(node * root) {
 	return NULL;
 }
 
+node** cbtree_alloc()
+{
+	node **root = malloc(sizeof(void*));
+	*root = NULL;
+
+	pthread_spin_init(&global_lock, PTHREAD_PROCESS_PRIVATE);
+	return root;
+}
 
 
 void initial_add (struct node **root, int num, int range) {

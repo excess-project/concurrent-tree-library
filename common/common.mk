@@ -12,7 +12,7 @@ GEM5_DIR := ../m5
 
 CMN_INC	:= ../common
 
-ARCH:=$(shell uname -p)
+ARCH:=$(shell uname -m)
 
 #Addon (default) files
 ADDONS	:= ${CMN_INC}/barrier.c ${CMN_INC}/locks.c ${CMN_INC}/bench.c

@@ -81,7 +81,7 @@ typedef struct node {
 
 } node;
 
-
+node** cbtree_alloc();
 int search_par(struct node* root, int key);
 int delete_par(struct node* root, int key);
 int insert_par(struct node** root, int key, int value);
