@@ -1,5 +1,5 @@
-SRCS    := gbst.c main.c gbstlock.c
-#PREC	:= gbst.o
+SRCS    := main.c gbstlock.c
+PREC	:= gbst.o
 TARGET  := GreenBST
 TREE	:= -fPIC -DGBST -D__PREALLOCGNODES=4095
 
