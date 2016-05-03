@@ -55,7 +55,7 @@
 
 #define BENCH_SEARCH(root, x)  bst_tk_find(root, x)
 #define BENCH_DELETE(root, x)  bst_tk_delete(root, x)
-#define BENCH_INSERT(root, x)  bst_tk_insert(root, x, x)
+#define BENCH_INSERT(root, x)  bst_tk_insert(root, x, NULL)
 
 #endif
 
@@ -68,7 +68,7 @@
 
 #define BENCH_SEARCH(root, x)  search_par(*root, x)
 #define BENCH_DELETE(root, x)  delete_par(*root, x)
-#define BENCH_INSERT(root, x)  insert_par(root, x, x)
+#define BENCH_INSERT(root, x)  insert_par(root, x, NULL)
 
 #endif
 
@@ -80,7 +80,7 @@
 
 #define BENCH_SEARCH(root, x)  searchNode_lo(root, x)
 #define BENCH_DELETE(root, x)  deleteNode_lo(root, x)
-#define BENCH_INSERT(root, x)  insert_par(root, x, 0)
+#define BENCH_INSERT(root, x)  insert_par(root, x, NULL)
 
 #endif
 
@@ -93,7 +93,7 @@
 
 #define BENCH_SEARCH(root, x)  greenbst_contains(root, x)
 #define BENCH_DELETE(root, x)  greenbst_delete(root, x)
-#define BENCH_INSERT(root, x)  greenbst_insert(root, x, 0)
+#define BENCH_INSERT(root, x)  greenbst_insert(root, x, NULL)
 
 #endif
 
@@ -132,7 +132,7 @@
 
 #define BENCH_SEARCH(root, x)  contains(root, x)
 #define BENCH_DELETE(root, x)  delete_node(root, x)
-#define BENCH_INSERT(root, x)  insert(root, x, x)
+#define BENCH_INSERT(root, x)  insert(root, x, NULL)
 
 #endif
 

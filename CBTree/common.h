@@ -64,12 +64,13 @@
 
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include "locks.h"
 
 typedef struct node {
 
         void ** pointers;
-        int * keys;
+        uintptr_t * keys;
         struct node * parent;
         bool is_leaf;
         int num_keys;
@@ -77,12 +78,14 @@ typedef struct node {
 
         pthread_spinlock_t lock;
         struct node * right_link;
-        int high_key;
+        uintptr_t high_key;
 
 } node;
 
 node** cbtree_alloc();
-int search_par(struct node* root, int key);
-int delete_par(struct node* root, int key);
-int insert_par(struct node** root, int key, int value);
+int search_par(struct node* root, uintptr_t key);
+void* get_par(struct node* root, uintptr_t key);
+
+int delete_par(struct node* root, uintptr_t key);
+int insert_par(struct node** root, uintptr_t key, void* value);
 #endif
