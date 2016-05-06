@@ -230,7 +230,6 @@ node * adjust_root(node * root);
 node * coalesce_nodes(node * root, node * n, node * neighbor, int neighbor_index, int k_prime);
 node * redistribute_nodes(node * root, node * n, node * neighbor, int neighbor_index,
                           int k_prime_index, int k_prime);
-node * delete_entry( node * root, node * n, int key, void * pointer );
 
 
 /*---------------START PARALEL------------------*/
@@ -341,21 +340,20 @@ int search_par(struct node* root, uintptr_t key)
 void* get_par(struct node* root, uintptr_t key)
 {
     struct node *current = root;
-    
+
     if(root == NULL) return 0;
-    
+
     while (!current->is_leaf) {
         scannode(key, &current, 0);
     }
-    
+
     while ((scannode(key, &current, 1))) {
-    
     }
-    
+
     if(current){
         return (void*)current;
     }
-    
+
     return 0;
 }
 
@@ -386,18 +384,18 @@ int insert_par( node ** root, uintptr_t key, void* value ) {
     void ** temp_pointers;
     int insertion_index, split, i, j;
 
-    
+
 	/* Case: the tree does not exist yet.
 	 * Start a new tree.
 	 */
-    
+
 	if (*root == NULL){
 		//printf("Try\n");
         //Try lock the global tree
         if(pthread_spin_trylock(&global_lock)==0){
 			if(*root == NULL){
 				//printf("Proceed\n");
-        		pointer = value;
+				pointer = value;
         		*root = start_new_tree(key, pointer);
         		pthread_spin_unlock(&global_lock);
         		return 1;
@@ -1380,96 +1378,6 @@ node * adjust_root(node * root) {
 }
 
 
-/* Coalesces a node that has become
- * too small after deletion
- * with a neighboring node that
- * can accept the additional entries
- * without exceeding the maximum.
- */
-node * coalesce_nodes(node * root, node * n, node * neighbor, int neighbor_index, int k_prime) {
-    
-	int i, j, neighbor_insertion_index, n_end;
-	node * tmp;
-    
-	/* Swap neighbor with node if node is on the
-	 * extreme left and neighbor is to its right.
-	 */
-    
-	if (neighbor_index == -1) {
-		tmp = n;
-		n = neighbor;
-		neighbor = tmp;
-	}
-    
-	/* Starting point in the neighbor for copying
-	 * keys and pointers from n.
-	 * Recall that n and neighbor have swapped places
-	 * in the special case of n being a leftmost child.
-	 */
-    
-	neighbor_insertion_index = neighbor->num_keys;
-    
-	/* Case:  nonleaf node.
-	 * Append k_prime and the following pointer.
-	 * Append all pointers and keys from the neighbor.
-	 */
-    
-	if (!n->is_leaf) {
-        
-		/* Append k_prime.
-		 */
-        
-		neighbor->keys[neighbor_insertion_index] = k_prime;
-		neighbor->num_keys++;
-        
-        
-		n_end = n->num_keys;
-        
-		for (i = neighbor_insertion_index + 1, j = 0; j < n_end; i++, j++) {
-			neighbor->keys[i] = n->keys[j];
-			neighbor->pointers[i] = n->pointers[j];
-			neighbor->num_keys++;
-			n->num_keys--;
-		}
-        
-		/* The number of pointers is always
-		 * one more than the number of keys.
-		 */
-        
-		neighbor->pointers[i] = n->pointers[j];
-        
-		/* All children must now point up to the same parent.
-		 */
-        
-		for (i = 0; i < neighbor->num_keys + 1; i++) {
-			tmp = (node *)neighbor->pointers[i];
-			tmp->parent = neighbor;
-		}
-	}
-    
-	/* In a leaf, append the keys and pointers of
-	 * n to the neighbor.
-	 * Set the neighbor's last pointer to point to
-	 * what had been n's right neighbor.
-	 */
-    
-	else {
-		for (i = neighbor_insertion_index, j = 0; j < n->num_keys; i++, j++) {
-			neighbor->keys[i] = n->keys[j];
-			neighbor->pointers[i] = n->pointers[j];
-			neighbor->num_keys++;
-		}
-		neighbor->pointers[order - 1] = n->pointers[order - 1];
-	}
-    
-	root = delete_entry(root, n->parent, k_prime, n);
-	free(n->keys);
-	free(n->pointers);
-	free(n);
-	return root;
-}
-
-
 /* Redistributes entries between two nodes when
  * one has become too small after deletion
  * but its neighbor is too big to append the
@@ -1546,98 +1454,6 @@ node * redistribute_nodes(node * root, node * n, node * neighbor, int neighbor_i
     
 	return root;
 }
-
-
-/* Deletes an entry from the B+ tree.
- * Removes the record and its key and pointer
- * from the leaf, and then makes all appropriate
- * changes to preserve the B+ tree properties.
- */
-node * delete_entry( node * root, node * n, int key, void * pointer ) {
-        
-	// Remove key and pointer from node.
-    
-	n = remove_entry_from_node(n, key, pointer);
-    
-	/* Case:  deletion from the root.
-	 */
-    /*
-	if (n == root)
-		return adjust_root(root);
-    */
-    
-	/* Case:  deletion from a node below the root.
-	 * (Rest of function body.)
-	 */
-    
-	/* Determine minimum allowable size of node,
-	 * to be preserved after deletion.
-	 */
-    
-//	min_keys = n->is_leaf ? cut(order - 1) : cut(order) - 1;
-    
-	/* Case:  node stays at or above minimum.
-	 * (The simple case.)
-	 */
-    
-//	if (n->num_keys >= min_keys)
-		return root;
-    
-//	/* Case:  node falls below minimum.
-//	 * Either coalescence or redistribution
-//	 * is needed.
-//	 */
-//    
-//	/* Find the appropriate neighbor node with which
-//	 * to coalesce.
-//	 * Also find the key (k_prime) in the parent
-//	 * between the pointer to node n and the pointer
-//	 * to the neighbor.
-//	 */
-//    
-//	neighbor_index = get_neighbor_index( n );
-//	k_prime_index = neighbor_index == -1 ? 0 : neighbor_index;
-//	k_prime = n->parent->keys[k_prime_index];
-//	neighbor = neighbor_index == -1 ? n->parent->pointers[1] :
-//    n->parent->pointers[neighbor_index];
-//    
-//	capacity = n->is_leaf ? order : order - 1;
-//    
-//	/* Coalescence. */
-//    
-//	if (neighbor->num_keys + n->num_keys < capacity)
-//		return coalesce_nodes(root, n, neighbor, neighbor_index, k_prime);
-//    
-//	/* Redistribution. */
-//    
-//	else
-//		return redistribute_nodes(root, n, neighbor, neighbor_index, k_prime_index, k_prime);
-}
-
-
-
-/* Master deletion function.
-
-node * delete(node * root, int key) {
-    
-	node * key_leaf;
-	record * key_record;
-    
-	key_record = find(root, key, false);
-	key_leaf = find_leaf(root, key, false);
-    
-    
-	if (key_record != NULL && key_leaf != NULL) {
-        pthread_spin_lock(&key_leaf->lock);
-        root = delete_entry(root, key_leaf, key, key_record);
-		free(key_record);
-        pthread_spin_unlock(&key_leaf->lock);
-        
-	}
-    
-	return root;
-}
-*/
 
 void destroy_tree_nodes(node * root) {
 	int i;

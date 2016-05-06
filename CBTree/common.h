@@ -88,4 +88,6 @@ void* get_par(struct node* root, uintptr_t key);
 
 int delete_par(struct node* root, uintptr_t key);
 int insert_par(struct node** root, uintptr_t key, void* value);
+node * destroy_tree(node * root);
+
 #endif
