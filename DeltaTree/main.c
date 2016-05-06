@@ -93,25 +93,25 @@ int main(int argc, char **argv ) {
 	else
 		srand(s);
     
-	greenbst_t* greenbstPtr = greenbst_alloc();
-    assert(greenbstPtr);
+	deltatree_t* deltatreePtr = deltatree_alloc();
+    assert(deltatreePtr);
 	
 #if !defined(__TEST)
 	
     if(i){
         fprintf(stderr,"Now pre-filling %d random elements...\n", i);
-        initial_add(greenbstPtr, i, r);
+        initial_add(deltatreePtr, i, r);
     }
     
-    fprintf(stderr, "Finished init a DeltaTree using DeltaNode size %d, with initial %d members\n", greenbstPtr->max_node, i);
+    fprintf(stderr, "Finished init a DeltaTree using DeltaNode size %d, with initial %d members\n", deltatreePtr->max_node, i);
     fflush(stderr);
     
-    start_benchmark(greenbstPtr, r, u, n, v);
+    start_benchmark(deltatreePtr, r, u, n, v);
     
 #else
 
-	testpar(greenbstPtr, u, n, 1);
-	testseq(greenbstPtr, 1);
+	testpar(deltatreePtr, u, n, 1);
+	testseq(deltatreePtr, 1);
     
 #endif
 

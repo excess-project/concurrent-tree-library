@@ -153,7 +153,6 @@ struct deltaNode* pop(struct stack *stk){
     }
 }
 
-
 /* Externs */
 
 extern struct node_ref minebuf[GNODES_SIZE];
@@ -171,95 +170,15 @@ extern unsigned poolCounter;
 extern unsigned  *_poolCtr;
 
 
-/* Array Operations */
-void print_int_array(const int *array, size_t len);
-int int_cmp(const void *a, const void *b);
-void sort_all(int* array, long size);
-void blank_int_array(int *array, size_t len);
-void create_rec( struct node_ref **p, int n, struct node_ref **mine, int *last, int u);
+typedef struct global deltatree_t;
 
-/* Tree Operations */
+deltatree_t * deltatree_alloc();
+int deltatree_free(deltatree_t *);
 
-//static inline
-//void nop(void *null){};
-
-static inline
-unsigned _val(unsigned x) 
-{
-    return x & ~(1<<31);
-}
-
-static inline
-void set_mark(unsigned *value)
-{
-    *value = *value | 1<<31;
-}
-
-static inline
-void unset_mark(unsigned *value)
-{
-    *value = *value & ~(1<<31);
-}
-
-static inline
-unsigned is_marked(unsigned value)
-{
-    return (value >> 31);
-}
-/*
-static inline
-int get_idx(void* p, void* base, size_t nodesize){
-    return (int)((p - base)/nodesize);
-}
-*/
-static inline    
-void* left(void* p, void* base, size_t nodesize){
-
-    int idx = (int)(((size_t)p - (size_t)base)/nodesize);
-
-    //fprintf(stderr, "going left from index %d, to %ld (%d)\n", idx, _map[idx].left + base, _map[idx].left );
-
-    if (_map[idx].left != 0)
-        return base + _map[idx].left;
-    else
-        return 0;
-}
-
-static inline
-void* right(void* p, void* base, size_t nodesize){
-
-    int idx = (int)(((size_t)p - (size_t)base)/nodesize);
-
-    //fprintf(stderr, "going right from index %d, to %ld (%d)\n", idx, _map[idx].right + base, _map[idx].right );
-
-    if (_map[idx].right != 0)
-        return base + _map[idx].right;
-    else
-        return 0;
-}
-
-int insert_par( struct global *universe, unsigned key, void *data);
-
-int insertNode_lo(struct global* universe, unsigned val);
-int searchNode_lo(struct global* universe, unsigned val);
-int deleteNode_lo(struct global* universe, unsigned val);
-
-void create_map( struct node_ref *p, int size );
-void report_all( struct node *p );
-void create_rec( struct node_ref **p, int n, struct node_ref **mine, int *last, int u);
-void *init_node(int max_node);
-void *init_leaf(int max_node);
-void init_global(struct global *universe);
-
-typedef struct global greenbst_t;
-
-greenbst_t * greenbst_alloc();
-int greenbst_free(greenbst_t *);
-
-int greenbst_contains(greenbst_t *, void*);
-void* greenbst_get(greenbst_t *, void*);
-int greenbst_insert(greenbst_t *, void*, void*);
-int greenbst_delete(greenbst_t *, void*);
+int deltatree_contains(deltatree_t *, unsigned);
+void* deltatree_get(deltatree_t *, unsigned);
+int deltatree_insert(deltatree_t *, unsigned, void*);
+int deltatree_delete(deltatree_t *, unsigned);
 void printStat(struct global *universe);
 
 void initial_add (struct global *universe, int num, int range);
