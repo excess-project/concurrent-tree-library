@@ -32,6 +32,7 @@
 #ifndef gbst_h
 #define gbst_h
 
+#include <stdint.h>
 #include "gbstlock.h"
 #include "locks.h"
 
@@ -71,12 +72,13 @@ static inline int pthread_spin_lock_w(gbst_lock_t *lock)
 #define EMPTY   0
 #define FULL    1
 
-
 #define MAX_STACK 50
 
+//Here we define the type of key, careful with the size
 #define _NODETYPE unsigned
+#define _NODESIZE 2 // X = sizeof(_NODETYPE), 2 = 4 bytes, 3 = 8 bytes, etc.
 
-struct map { size_t left; size_t right; } __attribute__ ((aligned));
+struct map { uintptr_t left; uintptr_t right; } __attribute__ ((aligned));
 
 struct node {
 	_NODETYPE value;
@@ -163,7 +165,7 @@ extern struct map mapcontent[__PREALLOCGNODES];
 struct pool {
 	struct node	nodepool[MAX_POOLSIZE][__PREALLOCGNODES];
 	struct GNode	GNodepool[MAX_POOLSIZE];
-	size_t		linkpool [MAX_POOLSIZE][__PREALLOCGNODES];
+	uintptr_t		linkpool [MAX_POOLSIZE][__PREALLOCGNODES];
 };
 
 extern struct pool poolrepo;
@@ -199,13 +201,6 @@ unsigned is_marked(unsigned value)
 	return value >> 31;
 }
 
-/*
- * static inline
- * int get_idx(void* p, void* base, size_t nodesize){
- *  return (int)((p - base)/nodesize);
- * }
- */
-
 //Below is left and right WITHOUT branch. Careful with the node size.
 
 //#define left(p,base) (void*) (((uintptr_t)base +_map[((uintptr_t)p - (uintptr_t)base)>>2].left) * !((SIZE_MAX + _map[((uintptr_t)p - (uintptr_t)base)>>2].left) >> 63))
@@ -217,9 +212,15 @@ unsigned is_marked(unsigned value)
 //#define right(p,base) (void*)(_map[(int)(((uintptr_t)p - (uintptr_t)base)>>2)].right?((uintptr_t)base + _map[(int)(((uintptr_t)p - (uintptr_t)base)>>2)].right):0)
 
 static inline
+int get_idx(void* p, void* base)
+{
+	return (int)(((uintptr_t)p - (uintptr_t)base) >> _NODESIZE);
+}
+
+static inline
 void *left(void *p, void *base)
 {
-	int idx = (int)(((size_t)p - (size_t)base) >> 2);
+	int idx = (int)(((uintptr_t)p - (uintptr_t)base) >> _NODESIZE);
 
 	//fprintf(stderr, "going left from index %d, to %ld (%d)\n", idx, _map[idx].left + base, _map[idx].left );
 
@@ -232,7 +233,7 @@ void *left(void *p, void *base)
 static inline
 void *right(void *p, void *base)
 {
-	int idx = (int)(((size_t)p - (size_t)base) >> 2);
+	int idx = (int)(((uintptr_t)p - (uintptr_t)base) >> _NODESIZE);
 
 	//fprintf(stderr, "going right from index %d, to %ld (%d)\n", idx, _map[idx].right + base, _map[idx].right );
 
