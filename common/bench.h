@@ -68,7 +68,7 @@
 
 #define BENCH_SEARCH(root, x)  search_par(*root, x)
 #define BENCH_DELETE(root, x)  delete_par(*root, x)
-#define BENCH_INSERT(root, x)  insert_par(root, x, NULL)
+#define BENCH_INSERT(root, x)  insert_par(root, x, 1)
 
 #endif
 
@@ -78,9 +78,9 @@
 
 #define data_t struct global*
 
-#define BENCH_SEARCH(root, x)  searchNode_lo(root, x)
-#define BENCH_DELETE(root, x)  deleteNode_lo(root, x)
-#define BENCH_INSERT(root, x)  insert_par(root, x, NULL)
+#define BENCH_SEARCH(root, x)  deltatree_contains(root, x)
+#define BENCH_DELETE(root, x)  deltatree_delete(root, x)
+#define BENCH_INSERT(root, x)  deltatree_insert(root, x, NULL)
 
 #endif
 

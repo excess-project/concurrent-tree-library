@@ -27,66 +27,55 @@
 
 
 #ifdef MAP_USE_CBTREE
-#define CBTREE
-#endif
 
-#ifdef MAP_USE_DTREE
-#define DTREE
-#endif
-
-#ifdef MAP_USE_BBST
-#define BBST
-#endif
-
-#ifdef MAP_USE_GBST
-#define GBST
-#endif
-
-
-#include "bench.h"
-
-#define MAP_T data_t
-
-#define MAP_FIND(root,x) 	BENCH_SEARCH(root, x)
-#define MAP_CONTAINS(root,x)	BENCH_SEARCH(root, x)
-#define MAP_REMOVE(root,x)	BENCH_DELETE(root, x)
-#define	MAP_INSERT(root,x)	BENCH_INSERT(root, x)
-
-
-#ifdef MAP_USE_CBTREE
+#include "../CBTree/common.h"
 
 extern pthread_spinlock_t global_lock;
 
-#define MAP_ALLOC(x,y) cbtree_alloc()
-#define MAP_FREE(x) {}
+#define MAP_T 			node**
+
+#define MAP_ALLOC(x,y) 		cbtree_alloc()
+#define MAP_FREE(x) 		destroy_tree(*x)
+#define MAP_GET(root,x) 	get_par(*root, x)
+#define MAP_CONTAINS(root,x)	search_par(*root, x)
+#define MAP_REMOVE(root,x)	delete_par(*root, x)
+#define	MAP_INSERT(root, x, y)	insert_par(root, x, y)
+
 
 #endif
 
 #ifdef MAP_USE_GBST
 
-data_t gbst_alloc(int a, int b)
-{
-	greenbst_t *greenbstPtr = greenbst_alloc(4095);
-	assert(greenbstPtr);
-	return greenbstPtr;
-}
+#include "../GreenBST/gbst.h"
 
-#define MAP_ALLOC(x,y) gbst_alloc(x,y)
+#define MAP_T greenbst_t*
+
+
+#define MAP_ALLOC(x,y) greenbst_alloc(4095)
 #define MAP_FREE(x) {}
+
+#define MAP_GET(root, x)		greenbst_get(root, x)
+#define MAP_CONTAINS(root, x)   greenbst_contains(root, x)
+#define MAP_REMOVE(root, x)		greenbst_delete(root, x)
+#define MAP_INSERT(root, x, y)  greenbst_insert(root, x, y)
 
 #endif
 
 #ifdef MAP_USE_DTREE
 
-data_t dtree_alloc(int a, int b)
-{
-	greenbst_t *greenbstPtr = greenbst_alloc();
-	assert(greenbstPtr);
-	return greenbstPtr;
-}
+#include "../DeltaTree/dtree.h"
 
-#define MAP_ALLOC(x,y) dtree_alloc(x,y)
+
+#define MAP_T deltatree_t*
+
+
+#define MAP_ALLOC(x,y) deltatree_alloc()
 #define MAP_FREE(x) {}
+
+#define MAP_GET(root, x)		deltatree_get(root, x)
+#define MAP_CONTAINS(root, x)   deltatree_contains(root, x)
+#define MAP_REMOVE(root, x)		deltatree_delete(root, x)
+#define MAP_INSERT(root, x, y)  deltatree_insert(root, x, y)
 
 #endif
 
