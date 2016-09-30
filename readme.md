@@ -33,7 +33,7 @@ CBTree is a prominent locality-aware concurrent B+tree [25]. CBTree is a represe
 
 **Related publication:**
 
-Philip L. Lehman and s. Bing Yao. 1981. Efficient locking for concurrent operations on B-trees. ACM Trans. Database Syst. 6, 4 (December 1981), 650-670.
+* Philip L. Lehman and s. Bing Yao. 1981. Efficient locking for concurrent operations on B-trees. ACM Trans. Database Syst. 6, 4 (December 1981), 650-670.
 
 ### 3. Lock-based (SVEB) and transactional (VTMtree) dynamic cache-oblivious tree
 
@@ -41,7 +41,7 @@ SVEB and VTMtree are the concurrent implementation of the fine-grained locality-
 
 **Related publication:**
 
-Gerth Stølting Brodal, Rolf Fagerberg, and Riko Jacob. Cache oblivious search trees via binary trees of small height. In Proc. 13th ACM-SIAM Symp. Discrete algorithms, SODA ’02, pages 39–48, 2002.
+* Gerth Stølting Brodal, Rolf Fagerberg, and Riko Jacob. Cache oblivious search trees via binary trees of small height. In Proc. 13th ACM-SIAM Symp. Discrete algorithms, SODA ’02, pages 39–48, 2002.
 
 ### 4. Original non-blocking binary search tree (NBBST) and its improved variant (LFBST)
 
@@ -84,7 +84,7 @@ https://bitbucket.org/mayaarl/citrus
 
 **Related publication:**
 
-Maya Arbel and Hagit Attiya. Concurrent updates with rcu: Search tree as an example. In Proc. 2014 ACM Symposium on Principles of Distributed Computing, PODC ’14, pages 196–205. ACM, 2014.
+* Maya Arbel and Hagit Attiya. Concurrent updates with rcu: Search tree as an example. In Proc. 2014 ACM Symposium on Principles of Distributed Computing, PODC ’14, pages 196–205. ACM, 2014.
 
 ### 7. Portably scalable concurrent search tree (BSTTK)
 BST-TK is the state-of- the-art lock-based concurrent search tree based on the asynchronous concurrency paradigm. BST-TK is portably scalable, namely it scales across different types of hardware platforms. BSTTK is a locality-oblivious tree.
@@ -94,7 +94,7 @@ https://github.com/LPD-EPFL/ASCYLIB
 
 **Related publication:**
 
-Tudor David, Rachid Guerraoui, and Vasileios Trigonakis. Asynchronized concurrency: The secret to scaling concurrent search data structures. In Proc. 12th Intl. Conf. on Architectural Support for Programming Languages and Operating Systems, ASPLOS’15, pages 631–644, 2015
+* Tudor David, Rachid Guerraoui, and Vasileios Trigonakis. Asynchronized concurrency: The secret to scaling concurrent search data structures. In Proc. 12th Intl. Conf. on Architectural Support for Programming Languages and Operating Systems, ASPLOS’15, pages 631–644, 2015
 
 # Using the trees
 
