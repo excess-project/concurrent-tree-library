@@ -158,7 +158,7 @@ A sample code and its accompanying makefile is available in the `sample/` direct
 
 DeltaTree library also provides a collection of standalone benchmark programs for each tree. Below is an example of running a standalone benchmark program. These benchmark programs accept several runtime parameters (e.g., initial tree size, how many update/search operation ratios).
 
-```bash
+```
 $ ./DeltaTree -h
 DeltaTree v0.1
 ===============
